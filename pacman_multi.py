@@ -5,6 +5,7 @@ import numpy as np
 import tensorflow as tf
 import gym
 import os
+import pickle
 
 import matplotlib.animation as animation
 import matplotlib.pyplot as plt
@@ -169,6 +170,7 @@ eps_min = 0.1
 eps_max = 1.0
 eps_decay_steps = 2000000
 
+
 def epsilon_greedy(q_values, step):
     epsilon = max(eps_min, eps_max - (eps_max-eps_min) * step/eps_decay_steps)
     if np.random.rand() < epsilon:
@@ -177,38 +179,9 @@ def epsilon_greedy(q_values, step):
         return np.argmax(q_values) # optimal action
 
 
-n_steps = 4000000  # total number of training steps
-# training_start = 10000  # start training after 10,000 game iterations
-training_start = 1000  # start training after 10,000 game iterations
-training_interval = 4  # run a training step every 4 game iterations
-save_steps = 1000  # save the model every 1,000 training steps
-copy_steps = 10000  # copy online DQN to target DQN every 10,000 training steps
-discount_rate = 0.99
-skip_start = 90  # Skip the start of every game (it's just waiting time).
-batch_size = 50
-iteration = 0  # game iterations
-checkpoint_path = "./my_dqn.ckpt"
-done = True # env needs to be reset
-
-
-loss_val = np.infty
-game_length = 0
-total_max_q = 0
-mean_max_q = 0.0
-
-
-
-with tf.Session() as sess:
-    if os.path.isfile(checkpoint_path + ".index"):
-        print('restoring model')
-        saver.restore(sess, checkpoint_path)
-    else:
-        print('creating new model')
-        init.run()
-        copy_online_to_target.run()
-
-    n_max_steps = 10000
+def run_game(env, q_values_op, n_max_steps=10000):
     frames = []
+    total_rewards = 0
     obs = env.reset()
     # img = env.render(mode="rgb_array")
     frames.append(obs)
@@ -216,11 +189,12 @@ with tf.Session() as sess:
         state = preprocess_observation(obs)
 
         # Online DQN evaluates what to do
-        q_values = online_q_values.eval(feed_dict={X_state: [state]})
+        q_values = q_values_op.eval(feed_dict={X_state: [state]})
         action = np.argmax(q_values)
 
         # Online DQN plays
         obs, reward, done, info = env.step(action)
+        total_rewards += reward
 
         if reward > 0:
             print(reward)
@@ -230,95 +204,147 @@ with tf.Session() as sess:
         frames.append(obs)
 
         if done:
-            print('done at {} steps'.format(step), len(frames))
+            print('done at {} steps. frame {} score {}'.format(step, len(frames), total_rewards))
             break
     video = plot_animation(frames)
-    plt.show()
+    plt.show()    
 
-    next_q_values = None
-    total_rewards = 0
+n_steps = 4000000  # total number of training steps
+# training_start = 10000  # start training after 10,000 game iterations
+training_start = 1000  # start training after 10,000 game iterations
+training_interval = 5  # run a training step every 4 game iterations
+save_steps = 1000  # save the model every 1,000 training steps
+copy_steps = 10000  # copy online DQN to target DQN every 10,000 training steps
+discount_rate = 0.99
+skip_start = 90  # Skip the start of every game (it's just waiting time).
+batch_size = 50
+iteration = 0  # game iterations
+checkpoint_path = "./my_dqn.ckpt"
+memory_fn = checkpoint_path + '.memory'
+done = True # env needs to be reset
+final_game_score = 0
+game_score = 0
+game_count = -1
 
-    while True:
-        step = global_step.eval()
-        if step >= n_steps:
-            break
+loss_val = np.infty
+game_length = 0
+total_max_q = 0
+mean_max_q = 0.0
 
-        iteration += 1
-        game_length += 1
 
-        if iteration % 1000 == 0:
-            if next_q_values is not None:
-                sh = next_q_values.shape
-            else:
-                sh = ''
-  
-            t = time.strftime('%H:%M:%S', time.localtime(time.time()))
-            print("{} Iteration {}\tTraining step {}/{} ({:.1f})%\tLoss {:5f}\tMean Max-Q {:5f}   {}".format(
-                  t, iteration, step, n_steps, step * 100 / n_steps, loss_val, mean_max_q, sh))
+with tf.Session() as sess:
+    if os.path.isfile(checkpoint_path + ".index"):
+        print('restoring model')
+        saver.restore(sess, checkpoint_path)
 
-        if done: 
-            # game over, start again
-            obs = env.reset()
-            for skip in range(skip_start): # skip the start of each game
-                obs, reward, done, info = env.step(0)
+        if os.path.exists(memory_fn):
+            print('loading memory file')
+            with open(memory_fn, 'rb') as f:
+                replay_memory = pickle.load(f)            
+    else:
+        print('creating new model')
+        init.run()
+        copy_online_to_target.run()
+
+    run_game(env, online_q_values)
+
+    try:
+        while True:
+            step = global_step.eval()
+            if step >= n_steps:
+                break
+
+            iteration += 1
+            game_length += 1
+
+            if iteration % 1000 == 0:
+                t = time.strftime('%H:%M:%S', time.localtime(time.time()))
+                print("{} Iteration {} Training step {}/{} ({:.1f})% Loss {:.3f} Mean Max-Q {:.3f} Mem Len: {} Games played: {} Game Score: {}".format(
+                      t, iteration, step, n_steps, step * 100 / n_steps, loss_val, mean_max_q, len(replay_memory), game_count, final_game_score))
+
+            if done:
+                # reset game
+                last_state = None
+                total_rewards = 0
+                last_action = None
+                action = None
+                final_game_score = game_score
+                game_score = 0
+                game_count += 1
+
+                obs = env.reset()
+                for skip in range(skip_start): # skip the start of each game
+                    obs, reward, done, info = env.step(0)
+
+                state = preprocess_observation(obs)
+
+
+            if action is None or (iteration-1) % training_interval == 0:
+                total_rewards = 0
+
+                # Online DQN evaluates what to do
+                q_values = online_q_values.eval(feed_dict={X_state: [state]})
+                last_action = action
+                action = epsilon_greedy(q_values, step)
+
+            # Online DQN plays
+            obs, reward, done, info = env.step(action)
+            total_rewards += reward
+            game_score += reward
+
+
+            if not done and (iteration-1) % training_interval != 0:
+                continue
+
+            # reset state
+            last_state = state
             state = preprocess_observation(obs)
+
+            if last_action is not None:
+                replay_memory.append((last_state, last_action, total_rewards, state, 1.0 - done))
+
             total_rewards = 0
-            next_q_values = None
 
+            # Compute statistics for tracking progress (not shown in the book)
+            total_max_q += q_values.max()
 
-        if (iteration-1) % training_interval == 0:
-            # Online DQN evaluates what to do
-            q_values = online_q_values.eval(feed_dict={X_state: [state]})
-            action = epsilon_greedy(q_values, step)
+            if done:
+                mean_max_q = total_max_q / game_length
+                total_max_q = 0.0
+                game_length = 0
 
-        # Online DQN plays
-        obs, reward, done, info = env.step(action)
-        total_rewards += reward
+            # if iteration < training_start or iteration % training_interval != 0:
+            #     continue # only train after warmup period and at regular intervals
 
-        if (iteration-1) % training_interval != 0:
-            continue
+            if len(replay_memory) < 10 and iteration < training_start:
+                continue # only train after warmup period and at regular intervals
+            
 
-        next_state = preprocess_observation(obs)
+            # Sample memories and use the target DQN to produce the target Q-Value
+            X_state_val, X_action_val, rewards, X_next_state_val, continues = (
+                sample_memories(batch_size))
+            next_q_values = target_q_values.eval(
+                feed_dict={X_state: X_next_state_val})
+            max_next_q_values = np.max(next_q_values, axis=1, keepdims=True)
+            y_val = rewards + continues * discount_rate * max_next_q_values
 
-        # Let's memorize what happened
-        replay_memory.append((state, action, total_rewards, next_state, 1.0 - done))
+            # Train the online DQN
+            _, loss_val = sess.run([training_op, loss], feed_dict={
+                X_state: X_state_val, X_action: X_action_val, y: y_val})
 
-        # reset state
-        state = next_state
-        total_reward = 0
+            # Regularly copy the online DQN to the target DQN
+            if step % copy_steps == 0:
+                copy_online_to_target.run()
 
-        # Compute statistics for tracking progress (not shown in the book)
-        total_max_q += q_values.max()
+            # And save regularly
+            if step % save_steps == 0:
+                saver.save(sess, checkpoint_path)
 
-        if done:
-            mean_max_q = total_max_q / game_length
-            total_max_q = 0.0
-            game_length = 0
+    except KeyboardInterrupt:
+        pass
 
-        # if iteration < training_start or iteration % training_interval != 0:
-        #     continue # only train after warmup period and at regular intervals
+    run_game(env, online_q_values)
 
-        if iteration < training_start:
-            continue # only train after warmup period and at regular intervals
-        
-
-        # Sample memories and use the target DQN to produce the target Q-Value
-        X_state_val, X_action_val, rewards, X_next_state_val, continues = (
-            sample_memories(batch_size))
-        next_q_values = target_q_values.eval(
-            feed_dict={X_state: X_next_state_val})
-        max_next_q_values = np.max(next_q_values, axis=1, keepdims=True)
-        y_val = rewards + continues * discount_rate * max_next_q_values
-
-        # Train the online DQN
-        _, loss_val = sess.run([training_op, loss], feed_dict={
-            X_state: X_state_val, X_action: X_action_val, y: y_val})
-
-        # Regularly copy the online DQN to the target DQN
-        if step % copy_steps == 0:
-            copy_online_to_target.run()
-
-        # And save regularly
-        if step % save_steps == 0:
-            saver.save(sess, checkpoint_path)
-
+    print('dumping memory')
+    with open(memory_fn, 'wb') as f:
+        pickle.dump(replay_memory, f)
