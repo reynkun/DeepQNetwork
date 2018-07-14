@@ -94,13 +94,44 @@ def render_game(game_frames, actions, repeat=True, interval=30):
 
     return video
 
+
+class RingBuf:
+    def __init__(self, size):
+        # Pro-tip: when implementing a ring buffer, always allocate one extra element,
+        # this way, self.start == self.end always means the buffer is EMPTY, whereas
+        # if you allocate exactly the right number of elements, it could also mean
+        # the buffer is full. This greatly simplifies the rest of the code.
+        self.data = [None] * (size + 1)
+        self.start = 0
+        self.end = 0
+        
+    def append(self, element):
+        self.data[self.end] = element
+        self.end = (self.end + 1) % len(self.data)
+        # end == start and yet we just added one element. This means the buffer has one
+        # too many element. Remove the first element by incrementing start.
+        if self.end == self.start:
+            self.start = (self.start + 1) % len(self.data)
+        
+    def __getitem__(self, idx):
+        return self.data[(self.start + idx) % len(self.data)]
+    
+    def __len__(self):
+        if self.end < self.start:
+            return self.end + len(self.data) - self.start
+        else:
+            return self.end - self.start
+        
+    def __iter__(self):
+        for i in range(len(self)):
+            yield self[i]
     
 
 class GameTrainer(BaseEstimator):
     def __init__(self, 
                  game_id='MsPacman-v0',
                  model_class=None, 
-                 batch_size=50, 
+                 batch_size=32, 
                  num_epoch=1000,
                  report_ratio=0.1, 
                  save_path='./models',
@@ -115,16 +146,7 @@ class GameTrainer(BaseEstimator):
 
         self.eps_min = 0.1
         self.eps_max = 1.0
-        self.eps_decay_steps = 2000000
-
-
-    def make_batch(self, X, i, batch_size):
-        data = []
-        for fn in X[i * batch_size:(i + 1) * batch_size]:
-            data.append(read_image(fn))
-        X_batch = np.array(data)
-
-        return X_batch
+        self.eps_decay_steps = 1000000
 
 
     def fit(self):
@@ -139,23 +161,27 @@ class GameTrainer(BaseEstimator):
 
         save_steps = 10000
         copy_steps = 10000
-        mem_save_steps = 50000
 
         num_state_frames = 4
-        num_training_start_steps = 1000
-        batch_size = 50
+        num_training_start_steps = 10000
+        max_num_training = 20000000
 
         discount_rate = 0.99
 
         game_scores = deque(maxlen=25)
+        report_interval = 60
 
-        self.replay_memory_length = 150000
-        self.replay_memory = deque(maxlen=self.replay_memory_length)
+        self.replay_max_memory_length = 150000
+        mem_save_steps = int(self.replay_max_memory_length / 2)
+        self.replay_memory = RingBuf(self.replay_max_memory_length)        
+        # self.replay_memory = deque(maxlen=self.replay_max_memory_length)
 
         self.memory_fn = '{}.memory'.format(self.game_id)
         self.memory_path = os.path.join(self.save_path, '{}.memory'.format(self.game_id))
         self.memory_dir = os.path.dirname(self.memory_path)
 
+        self.memory_indices = np.random.permutation(num_training_start_steps)
+        self.memory_last_i = -1
         # memory_fn = '{}.memory'.format(self.game_id)
         # memory_path = os.path.join(self.save_path, '{}.memory'.format(self.game_id))
 
@@ -190,12 +216,14 @@ class GameTrainer(BaseEstimator):
 
             try:
                 iteration = 0
+                report_start_time = time.time()
+                report_last_iteration = 0
+                report_rate = 0
+                step = 0
 
-                for epoch in range(self.num_epoch):
+                while step < max_num_training:
                     epoch_start_time = time.time()
                     epoch_count = 0
-                    batch_start_time = time.time()
-                    batch_count = 0
 
                     total_max_q = 0.0
                     game_length = 0
@@ -205,6 +233,7 @@ class GameTrainer(BaseEstimator):
                     state = None
                     next_state = None
                     done = False
+                    losses = []
 
                     obs = self.env.reset()
 
@@ -225,31 +254,20 @@ class GameTrainer(BaseEstimator):
                             next_state = np.concatenate(state_frames, axis=2)
 
                             if state is not None:
-                                self.replay_memory.append((state, 
-                                                      action, 
-                                                      reward, 
-                                                      next_state, 
-                                                      1.0))
-
-
-                                # if game_length > 240 and game_length < 1000:
-                                #     print(game_length, action, 'reward:', total_rewards, game_score)
-
-                                # if total_rewards > 0:
-                                #     # print('before:', game_length, action, 'reward:', total_rewards, game_score)
-                                #     # render_state(state)
-                                #     print('newstate:', game_length, 'action:', action, 'reward:', total_rewards, game_score, ','.join([str(r) for r in rewards]))
-                                #     render_state(next_state)
-
-                                # if total_rewards == 0 and game_score > 0:
-                                #     print('newstate:', game_length, 'action:', action, 'reward:', total_rewards, game_score, ','.join([str(r) for r in rewards]))
-                                #     render_state(next_state)
+                                # self.replay_memory.append((state, 
+                                #                            action, 
+                                #                            reward, 
+                                #                            next_state, 
+                                #                            1.0))
+                                # self.replay_memory.append((state, action, np.array([reward]), next_state, np.array([1.0]m))
+                                self.append_replay(state, action, reward, next_state, 1)
 
                             state = next_state
 
                             # Online DQN evaluates what to do
-                            q_values = sess.model.online_q_values.eval(feed_dict={sess.model.X_state: [next_state]})
+                            q_values = sess.model.online_q_values.eval(feed_dict={sess.model.X_state: [self.convert_state(next_state)]})
                             total_max_q += q_values.max()
+
                             last_action = action
                             action = self.epsilon_greedy(q_values,
                                                          step)
@@ -258,9 +276,6 @@ class GameTrainer(BaseEstimator):
                         obs, reward, done, info = self.env.step(action)
 
                         game_score += reward
-
-                        # if game_length % num_skip_frames != 0:
-                        #     continue
 
                         obs = sess.model.preprocess_observation(obs)
                         state_frames.append(obs)
@@ -273,10 +288,10 @@ class GameTrainer(BaseEstimator):
                             continue 
 
                         # Sample memories and use the target DQN to produce the target Q-Value
-                        X_state_val, X_action_val, rewards, X_next_state_val, continues = self.sample_memories(batch_size)
+                        X_state_val, X_action_val, rewards, X_next_state_val, continues = self.sample_memories(self.batch_size)
 
                         next_q_values = sess.model.target_q_values.eval(
-                            feed_dict={sess.model.X_state: X_next_state_val})
+                            feed_dict={sess.model.X_state: self.convert_state(X_next_state_val)})
                         max_next_q_values = np.max(next_q_values, axis=1, keepdims=True)
                         y_val = rewards + continues * discount_rate * max_next_q_values
 
@@ -284,13 +299,15 @@ class GameTrainer(BaseEstimator):
                         tr_res, loss_val = sess.run([sess.model.training_op, 
                                                      sess.model.loss], 
                                                     feed_dict={
-                                                        sess.model.X_state: X_state_val, 
+                                                        sess.model.X_state: self.convert_state(X_state_val), 
                                                         sess.model.X_action: X_action_val, 
                                                         sess.model.y: y_val
                                                     })
+                        losses.append(loss_val)
 
                         # Regularly copy the online DQN to the target DQN
                         if step % copy_steps == 0:
+                            print('copying to target network')
                             sess.model.copy_online_to_target.run()
 
                         # And save regularly
@@ -302,13 +319,33 @@ class GameTrainer(BaseEstimator):
 
                     # game done, save last step
                     next_state = np.concatenate(state_frames, axis=2)# 
-                    self.replay_memory.append((state, action, reward, next_state, 0))
+                    # self.replay_memory.append((state, action, np.array([reward]), next_state, np.array([0]))
+                    self.append_replay(state, action, reward, next_state, 0)
+
                     state = next_state
 
                     if game_length > 0:
                         mean_max_q = total_max_q / game_length
                     else:
                         mean_max_q = 0
+
+                    elapsed = time.time() - epoch_start_time
+                    if elapsed > 0:
+                        frame_rate = game_length / (time.time() - epoch_start_time)
+                    else:
+                        frame_rate = 0.0
+
+                    report_elapsed = time.time() - report_start_time
+                    if report_elapsed > report_interval:
+                        report_rate = (iteration - report_last_iteration) / (report_elapsed)
+                        report_last_iteration = iteration
+                        report_start_time = time.time()
+
+
+                    if len(losses) > 0:
+                        avg_loss = sum(losses) / len(losses)
+                    else:
+                        avg_loss = 0
 
                     _, game_count = sess.run([sess.model.game_count_op, sess.model.game_count])
 
@@ -320,17 +357,20 @@ class GameTrainer(BaseEstimator):
                         avg_score = 0
 
                     epsilon = max(self.eps_min, self.eps_max - (self.eps_max-self.eps_min) * step/self.eps_decay_steps)
-                    print('{} {}/{} game {} len: {:d} max_q: {:0.3f} score: {:0.1f}  avg: {:0.1f} mem: {:d} eps: {:0.3f}'.format(
+                    print('{} {}/{} game {} len: {:d} max_q: {:0.3f} loss: {:0.3f} score: {:0.1f} avg: {:0.1f} mem: {:d} eps: {:0.3f} fr: {:0.1f}/{:0.1f}'.format(
                                                                                    time_string(),
                                                                                    iteration,
                                                                                    step,
                                                                                    game_count, 
                                                                                    game_length, 
                                                                                    mean_max_q,
+                                                                                   avg_loss,
                                                                                    game_score, 
                                                                                    avg_score,
                                                                                    len(self.replay_memory),
-                                                                                   epsilon))
+                                                                                   epsilon,
+                                                                                   frame_rate,
+                                                                                   report_rate))
                             
             except KeyboardInterrupt:
                 print('interrupted')
@@ -343,7 +383,7 @@ class GameTrainer(BaseEstimator):
     def play_func(self):
         num_state_frames = 4
         num_training_start_steps = 1000
-        batch_size = 50
+        batch_size = 32
 
         discount_rate = 0.99
 
@@ -357,9 +397,6 @@ class GameTrainer(BaseEstimator):
 
                 for epoch in range(self.num_epoch):
                     epoch_start_time = time.time()
-                    epoch_count = 0
-                    batch_start_time = time.time()
-                    batch_count = 0
 
                     total_max_q = 0.0
                     game_length = 0
@@ -444,16 +481,61 @@ class GameTrainer(BaseEstimator):
         self.env.close()
 
 
+    def append_replay(self, state, action, reward, next_state, cont):
+        self.replay_memory.append((state, action, np.array([reward]), next_state, np.array([cont])))
+
+
+
+    def convert_state(self, state):
+        return state        
+
 
     def sample_memories(self, batch_size):
-        indices = np.random.permutation(len(self.replay_memory))[:batch_size]
+        if len(self.memory_indices) < len(self.replay_memory):
+            new_size = min([int(len(self.memory_indices) * 2), self.replay_max_memory_length])
+            self.memory_indices = np.random.permutation(new_size)
+            self.memory_last_i = -1
+
+        # cols = [[], [], [], [], []] # state, action, reward, next_state, continue
+
+        # while len(cols[0]) < batch_size:
+        #     self.memory_last_i += 1
+        #     if self.memory_last_i >= len(self.memory_indices):
+        #         self.memory_last_i = 0
+        #     i = self.memory_last_i
+        #     idx = self.memory_indices[i]
+        #     if i > len(self.replay_memory):
+        #         continue
+        #     memory = self.replay_memory[idx]
+        #     for col, value in zip(cols, memory):
+        #         col.append(value)
+
+
+        # cols = [np.array(col) for col in cols]
+        # return cols[0], cols[1], cols[2].reshape(-1, 1), cols[3], cols[4].reshape(-1, 1)
+
+
         cols = [[], [], [], [], []] # state, action, reward, next_state, continue
-        for idx in indices:
+
+        while len(cols[0]) < batch_size:
+            self.memory_last_i += 1
+
+            if self.memory_last_i >= len(self.memory_indices):
+                self.memory_last_i = 0
+
+            i = self.memory_last_i
+            idx = self.memory_indices[i]
+
+            if idx >= len(self.replay_memory):
+                continue
+
             memory = self.replay_memory[idx]
             for col, value in zip(cols, memory):
                 col.append(value)
+
+
         cols = [np.array(col) for col in cols]
-        return cols[0], cols[1], cols[2].reshape(-1, 1), cols[3], cols[4].reshape(-1, 1)
+        return cols[0], cols[1], cols[2], cols[3], cols[4]
 
 
     def epsilon_greedy(self, q_values, step):
@@ -470,7 +552,7 @@ class GameTrainer(BaseEstimator):
 
         print('saving memory. memory length:', len(self.replay_memory), num_files)
         for i in range(num_files):
-            path = '{}-{:d}-{:d}'.format(self.memory_path, i, num_files)
+            path = '{}-{:d}'.format(self.memory_path, i, num_files)
             print('saving memory to:', path)
 
             with open(path, 'wb') as f:
@@ -486,13 +568,12 @@ class GameTrainer(BaseEstimator):
 
 
     def load_memory(self):
-
         fns = []
         for fn in os.listdir(self.memory_dir):
-            match = re.match(self.memory_fn + '-(\\d+)-\\d+', fn)
+            match = re.match(self.memory_fn + '-(\\d+)(-\\d+)?', fn)
             if not match:
                 continue
-            fns.append((fn, match.group(1)))
+            fns.append((fn, int(match.group(1))))
 
 
         for fn, num in sorted(fns, key=lambda x:x[1], reverse=True):
@@ -506,7 +587,7 @@ class GameTrainer(BaseEstimator):
                     for i in range(size):
                         self.replay_memory.append(pickle.load(fin))
 
-                if len(self.replay_memory) >= self.replay_memory_length:
+                if len(self.replay_memory) >= self.replay_max_memory_length:
                     break
 
             except EOFError:
