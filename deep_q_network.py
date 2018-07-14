@@ -153,7 +153,7 @@ class DeepQNetwork:
         p.join()
 
 
-    def fit_func(self):
+    def train(self):
         max_acc = 0
         max_rec = 0
 
@@ -196,6 +196,9 @@ class DeepQNetwork:
                 report_rate = 0
                 step = 0
 
+                print('copying to target network')
+                self.model.copy_online_to_target.run()
+
                 while step < max_num_training:
                     epoch_start_time = time.time()
                     epoch_count = 0
@@ -235,6 +238,7 @@ class DeepQNetwork:
 
                             # Online DQN evaluates what to do
                             q_values = self.model.online_q_values.eval(feed_dict={self.model.X_state: [self.convert_state(next_state)]})
+                            print(q_values)
                             total_max_q += q_values.max()
 
                             last_action = action
