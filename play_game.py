@@ -1,22 +1,31 @@
-# from train_game import GameTrainer
-# from game_player import GamePlayer
+import argparse
+import importlib
 
-# gt = GameTrainer('MsPacman-v0', GamePlayer)
+parser = argparse.ArgumentParser()
 
-# gt.play_func()
-# 
-# 
-# from deep_q_network2 import DeepQNetwork
-# from game_player import GamePlayer2
+parser.add_argument('network')
+parser.add_argument('agent')
 
-# qn = DeepQNetwork('MsPacman-v0', GamePlayer2)
+args = parser.parse_args()
 
-# qn.play()
-# 
-# 
-from deep_q_network2 import DeepQNetwork
-from ddqn_game_player import GamePlayer
 
-qn = DeepQNetwork('MsPacman-v0', GamePlayer)
+net_mod, net_cl_str = args.network.split('.')
+# net_cl = __import__(args.network)
+
+# net_cl = globals()[net_cl_str]
+
+ag_mod, ag_cl_str = args.agent.split('.')
+
+# ag_cl = __import__(args.agent)
+
+# ag_cl = globals()[ag_cl_str]
+
+mod = importlib.import_module(net_mod)
+net_cl = getattr(mod, net_cl_str)
+
+mod = importlib.import_module(ag_mod)
+ag_cl = getattr(mod, ag_cl_str)
+
+qn = net_cl('MsPacman-v0', ag_cl)
 
 qn.play()

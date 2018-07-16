@@ -10,12 +10,11 @@ obs = env.reset()
 print('actions', env.action_space.n)
 
 def update_scene(num, frames, patch):
-    print('f', end='')
     patch.set_data(frames[num])
     return patch,
 
 
-def plot_animation(frames, repeat=False, interval=500):
+def plot_animation(frames, repeat=False, interval=30):
     plt.close()  # or else nbagg sometimes plots in the previous cell
     fig = plt.figure()
     patch = plt.imshow(frames[0])

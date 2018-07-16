@@ -8,14 +8,24 @@ env = gym.make('MsPacman-v0')
 obs = env.reset()
 
 
-def preprocess_observation(obs):
+# def preprocess_observation(obs):
 
-    img = obs[1:176:2, ::2] # crop and downsize
-    img = img.mean(axis=2) # to grayscale
-    # img = img / 255 
-    img = img.reshape(88, 80, 1) 
-    return np.concatenate((img, img, img), axis=2).astype('uint8')
-    # return img
+#     img = obs[1:176:2, ::2] # crop and downsize
+#     img = img.mean(axis=2) # to grayscale
+#     # img = img / 255 
+#     img = img.reshape(88, 80, 1) 
+#     # return img
+
+def preprocess_observation(img):
+    img = img[::2, ::2] # crop and downsize
+    img = np.dot(img[...,:3], [0.299, 0.587, 0.144])
+    img = img.astype('uint8').reshape(img.shape[0], img.shape[1], 1)
+    print(img.shape)
+    # img = img.mean(axis=2) # to grayscale
+    # img[img==MSPACMAN_COLOR] = 0 # improve contrast
+
+    return np.concatenate((img, img, img), axis=2)
+
 
 def update_scene(num, frames, patch):
     print('f', end='')

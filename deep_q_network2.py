@@ -106,6 +106,7 @@ class RingBuf:
         self.start = 0
         self.end = 0
         
+
     def append(self, element):
         self.data[self.end] = element
         self.end = (self.end + 1) % len(self.data)
@@ -114,9 +115,11 @@ class RingBuf:
         if self.end == self.start:
             self.start = (self.start + 1) % len(self.data)
         
+
     def __getitem__(self, idx):
         return self.data[(self.start + idx) % len(self.data)]
     
+
     def __len__(self):
         if self.end < self.start:
             return self.end + len(self.data) - self.start
@@ -129,7 +132,6 @@ class RingBuf:
     
 
 class DeepQNetwork:
-
     def __init__(self, 
                  game_id='MsPacman-v0',
                  model_class=None, 
@@ -659,7 +661,7 @@ class DeepQNetwork:
                 pass
 
 
-    def get_session(parent, load_model=True, save_model=True, env=None):
+    def get_session(parent, load_model=True, save_model=False, env=None):
         class Session:
             def __init__(self, model_class, save_path, env):
                 self.model_class = model_class
@@ -672,7 +674,7 @@ class DeepQNetwork:
 
 
             def __exit__(self, ty, value, tb):
-                self.close()
+                self.close(ty, value, tb)
 
 
             def run(self, *args, **kwargs):
@@ -682,12 +684,6 @@ class DeepQNetwork:
             def save(self, path):
                 name = parent.game_id
                 save_path = os.path.join(path, name)
-
-                # for fn in os.listdir(path):
-                #     if fn.startswith(name):
-                #         fn_path = os.path.join(path, fn)
-                #         print('deleting old file:', fn_path)
-                #         os.unlink(fn_path)
 
                 print('saving model: ', save_path)
                 self.saver.save(self._sess, save_path)
@@ -737,12 +733,11 @@ class DeepQNetwork:
                 return self
 
 
-            def close(self):
-                print('closing model')
+            def close(self, ty=None, value=None, tb=None):
                 if save_model:
                     self.save(self.save_path)
 
-                self._sess.__exit__(None, None, None)                    
+                self._sess.__exit__(ty, value, tb)                    
                 self._sess.close()
                 self._sess = None
 
