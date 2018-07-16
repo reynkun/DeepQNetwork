@@ -236,9 +236,11 @@ class DeepQNetwork:
 
                             state = next_state
 
+                            if iteration < 10:
+                                print('state:', state)
+
                             # Online DQN evaluates what to do
                             q_values = self.model.online_q_values.eval(feed_dict={self.model.X_state: [self.convert_state(next_state)]})
-                            print(q_values)
                             total_max_q += q_values.max()
 
                             last_action = action

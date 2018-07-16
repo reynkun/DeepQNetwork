@@ -6,6 +6,7 @@ import random
 import datetime
 import multiprocessing
 import pickle
+import signal
 
 from collections import deque
 
@@ -147,7 +148,7 @@ class DeepQNetwork:
 
         self.eps_min = 0.1
         self.eps_max = 1.0
-        self.eps_decay_steps = 1000000
+        self.eps_decay_steps = 2000000
 
         self.num_state_frames = 4
 
@@ -162,6 +163,7 @@ class DeepQNetwork:
 
         self.memory_queue = multiprocessing.Queue()
         self.save_count = multiprocessing.Value('i', 0)
+        self.game_count = multiprocessing.Value('i', 0)
 
 
     def train(self):
@@ -173,6 +175,11 @@ class DeepQNetwork:
             g_t = multiprocessing.Process(target=self.run_game_func)
             g_t.start()
             g_t.join()
+
+            if g_t.exitcode != 0:
+                print('game process nonzero exit')
+                os.kill(p_t.pid, signal.SIGINT)
+                break
 
         p_t.join()
 
@@ -213,7 +220,7 @@ class DeepQNetwork:
                     iteration += 1
                     step = self.model.step.eval()
 
-                    if self.memory_queue.qsize():
+                    while self.memory_queue.qsize():
                         fn = self.memory_queue.get()
 
                         self.load_memory(replay_memory, fn)
@@ -244,6 +251,7 @@ class DeepQNetwork:
                     # And save regularly
                     if step % save_steps == 0:
                         sess.save(self.save_path)
+                        self.model.game_count.load(self.game_count.value)
                         self.save_count.value += 1
 
                     if step % train_report_interval == 0:
@@ -273,7 +281,8 @@ class DeepQNetwork:
                             
             except KeyboardInterrupt:
                 print('interrupted')
-                pass
+
+            self.model.game_count.load(self.game_count.value)
 
         env.close()
 
@@ -295,7 +304,11 @@ class DeepQNetwork:
             report_last_iteration = 0
             report_rate = 0
             step = 0
-            game_count = 0
+            info = None
+
+            if self.game_count.value <= 0:
+                self.game_count.value = sess.run([self.model.game_count])[0]
+
             last_save_count = self.save_count.value
 
             while True:
@@ -311,11 +324,12 @@ class DeepQNetwork:
                 next_state = None
                 done = False
                 losses = []
-                game_count += 1
 
                 if self.save_count.value > last_save_count:
                     print('save count changed reloading process')
                     break
+
+                self.game_count.value += 1
 
                 obs = env.reset()
 
@@ -357,9 +371,9 @@ class DeepQNetwork:
                     state_frames.append(obs)
 
                     if len(replay_memory) > 0 and len(replay_memory) % self.mem_save_steps == 0:
+                        self.clear_old_memory()
                         self.save_memory(replay_memory)
                         replay_memory = []
-                        self.clear_old_memory()
 
                 # game done, save last step
                 next_state = np.concatenate(state_frames, axis=2)
@@ -393,29 +407,32 @@ class DeepQNetwork:
                     avg_score = 0
 
                 epsilon = max(self.eps_min, self.eps_max - (self.eps_max-self.eps_min) * step/self.eps_decay_steps)
-                print('{} game  {} game {} len: {:d} max_q: {:0.3f} score: {:0.1f} avg: {:0.1f} mem: {:d} fr: {:0.1f}/{:0.1f}'.format(
+                print('{} game  {} game {} len: {:d} max_q: {:0.3f} score: {:0.1f} avg: {:0.1f} mem: {:d} eps: {:0.3f} fr: {:0.1f}/{:0.1f}'.format(
                                                                                time_string(),
                                                                                step,
-                                                                               game_count, 
+                                                                               self.game_count.value, 
                                                                                game_length, 
                                                                                mean_max_q,
                                                                                game_score, 
                                                                                avg_score,
                                                                                len(replay_memory),
+                                                                               epsilon,
                                                                                frame_rate,
                                                                                report_rate))
                         
 
+        if len(replay_memory) > 0 and len(replay_memory) % self.mem_save_steps == 0:
+            self.clear_old_memory()
+            self.save_memory(replay_memory)
+            replay_memory = []
+
 
         env.close()
 
+        return 0
 
-    def play_func(self):
-        num_training_start_steps = 1000
-        batch_size = 32
 
-        discount_rate = 0.99
-
+    def play(self):
         print('game_id:', self.game_id)
         env = gym.make(self.game_id)
         self.num_outputs = env.action_space.n
@@ -423,6 +440,7 @@ class DeepQNetwork:
         with self.get_session(load_model=True, save_model=False, env=env) as sess:
             try:
                 iteration = 0
+                step = self.model.step.eval()
 
                 for epoch in range(self.num_epoch):
                     epoch_start_time = time.time()
@@ -460,9 +478,9 @@ class DeepQNetwork:
 
                             # Online DQN evaluates what to do
                             q_values = self.model.online_q_values.eval(feed_dict={self.model.X_state: [next_state]})
-                            # action = self.epsilon_greedy(q_values,
-                            #                              step)
-                            action = np.argmax(q_values)
+                            action = self.epsilon_greedy(q_values,
+                                                         step)
+                            # action = np.argmax(q_values)
 
                         # Online DQN plays
                         obs, reward, done, info = env.step(action)
@@ -582,11 +600,13 @@ class DeepQNetwork:
                 continue
             fns.append((fn, int(match.group(1))))
 
-        if len(fns) * self.mem_save_steps > self.replay_max_memory_length:
-            num_to_delete = math.ceil((len(fns) * self.mem_save_steps - self.replay_max_memory_length) / self.mem_save_steps)
+        max_memory_count = self.replay_max_memory_length * 2
+    
+        if len(fns) * self.mem_save_steps > max_memory_count:
+            num_to_delete = math.ceil((len(fns) * self.mem_save_steps - max_memory_count) / self.mem_save_steps)
             print('#memory_files:', len(fns), self.replay_max_memory_length, 'deleting ', num_to_delete)
 
-            fns = list(sorted(fns), key=lambda x: x[1])
+            fns = list(sorted(fns, key=lambda x: x[1]))
             for i in range(num_to_delete):
                 fn = os.path.join(self.memory_dir, fns[i][0])
                 print('deleting', fn)

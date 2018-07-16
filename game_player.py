@@ -164,6 +164,14 @@ class GamePlayer2:
         return img.reshape(self.input_height, self.input_width, 1)
 
 
+    # def preprocess_observation(self, img):
+    #     img = img[::self.compress_ratio, ::self.compress_ratio] # crop and downsize
+    #     img = img.mean(axis=2) # to grayscale
+    #     img[img==MSPACMAN_COLOR] = 0 # improve contrast
+
+    #     return img.astype('uint8').reshape(self.input_height, self.input_width, 1)
+
+
 class GamePlayer():
     def __init__(self, num_outputs):
         self.num_outputs = num_outputs
@@ -275,7 +283,8 @@ class GamePlayer():
                                     trainable=False, 
                                     name='step')
             self.game_count = tf.Variable(0, trainable=False, name='game_count')
-            self.game_count_op = self.game_count.assign(tf.add(self.game_count, 1))
+            self.num_games_played = tf.placeholder(tf.int32, shape=[None])
+            self.game_count_op = self.game_count.assign(tf.add(self.game_count, self.num_games_played))
 
             optimizer = tf.train.MomentumOptimizer(learning_rate, 
                                                    momentum, 
