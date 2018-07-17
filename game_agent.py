@@ -69,7 +69,11 @@ class GameAgent:
                                                        self.input_width, 
                                                        self.input_channels])
         self.X_action = tf.placeholder(tf.int32, shape=[None])
+        self.X_rewards = tf.placeholder(tf.int32, shape=[None])
+        self.X_continues = tf.placeholder(tf.int8, shape=[None])
+
         self.y = tf.placeholder(tf.float16, shape=[None, 1])
+        self.discount_rate = tf.constant(0.99, dtype=tf.float16)
 
         # save how many games we've played
         self.game_count = tf.Variable(0, trainable=False, name='game_count')
@@ -86,13 +90,21 @@ class GameAgent:
         #                                          axis=1, 
         #                                          keepdims=True)
         self.double_max_q_values = tf.reduce_sum(self.target_q_values * tf.one_hot(self.online_actions, self.num_outputs, dtype=tf.float16),
-                                                    axis=1,
-                                                    keepdims=True)
+                                                 axis=1,
+                                                 keepdims=True)
+        self.max_q_values = tf.reduce_sum(self.target_q_values * tf.one_hot(self.X_action, self.num_outputs, dtype=tf.float16),
+                                          axis=1,
+                                          keepdims=True)
+
+        # print('dd:', self.double_max_q_values.shape)
+        # self.q_cur_and_next_q_values = tf.add(tf.cast(tf.reshape(self.X_rewards, (-1, 1)), tf.float16),
+        #                                       tf.multiply(tf.cast(tf.reshape(self.X_continues, (-1, 1)), tf.float16),
+        #                                                   tf.multiply(self.discount_rate,
+        #                                                               self.double_max_q_values)))
+        # print('qnext', self.q_cur_and_next_q_values.shape)
         # self.max_target_q_value = tf.reduce_sum(self.target_q_values * tf.one_hot(self.X_action, self.num_outputs, dtype=tf.float16),
         #                                         axis=1, 
         #                                         keepdims=True)
-
-
         # make copy online to target op
         copy_ops = []
         for var_name, target_var in target_vars.items():
@@ -167,9 +179,9 @@ class GameAgent:
         print('learning rate: {:0.3f}, momentum: {:0.3f}'.format(learning_rate, momentum))
 
         with tf.variable_scope("train"):
-            q_value = tf.reduce_sum(self.online_q_values * tf.one_hot(self.X_action, self.num_outputs, dtype=tf.float16),
-                                    axis=1, 
-                                    keepdims=True)
+            q_values = tf.reduce_sum(self.online_q_values * tf.one_hot(self.X_action, self.num_outputs, dtype=tf.float16),
+                                     axis=1, 
+                                     keepdims=True)
 
             # self.error = tf.abs(self.y - q_value)
             # clipped_error = tf.clip_by_value(self.error, 0.0, 1.0)
@@ -177,7 +189,7 @@ class GameAgent:
             # self.loss_action = tf.multiply(tf.square(clipped_error), 0.5) + linear_error
             # self.loss = tf.reduce_mean(tf.square(clipped_error) + linear_error)
             # self.loss = tf.reduce_mean(tf.multiply(tf.square(clipped_error), 0.5) + linear_error)
-            self.losses = tf.losses.huber_loss(self.y, q_value, reduction=tf.losses.Reduction.NONE)
+            self.losses = tf.losses.huber_loss(self.y, q_values, reduction=tf.losses.Reduction.NONE)
             self.loss = tf.reduce_mean(self.losses)
 
             self.step = tf.Variable(0, 
@@ -202,3 +214,7 @@ class GameAgent:
 
     def on_info(self, info):
         pass
+
+
+class PacmanGameAgent(GameAgent):
+    skip_steps = 90

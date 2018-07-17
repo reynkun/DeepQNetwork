@@ -101,18 +101,20 @@ def render_game(game_frames, actions, repeat=True, interval=30):
 
 class DeepQNetwork:
     def __init__(self, 
-                 game_id='MsPacman-v0',
-                 model_class=None, 
+                 game_id,
+                 model_class, 
                  batch_size=32, 
-                 save_path='./models',
+                 save_dir='./models',
                  mem_save_size=10000,
-                 num_training_start_steps=10000,
-                 verbose=True):
+                 num_training_start_steps=10000):
         self.model_class = model_class
         self.game_id = game_id
         self.batch_size = int(batch_size)
-        self.save_path = save_path
-        self.verbose = verbose
+        self.save_dir = save_dir
+        # self.save_path_prefix = os.path.join(self.save_dir, '{}-{}'.format(self.game_id, str(model_class)))
+        self.file_prefix = '{}'.format(self.game_id)
+        self.save_path_prefix = os.path.join(self.save_dir, self.file_prefix)
+        self.memory_file_prefix = '{}.memory'.format(self.file_prefix)
 
         self.eps_min = 0.1
         self.eps_max = 1.0
@@ -121,16 +123,10 @@ class DeepQNetwork:
 
         self.num_state_frames = 4
 
-        self.replay_max_memory_length = 250000
+        self.replay_max_memory_length = 500000
         self.max_num_run_game_replays = 10000
         self.mem_save_size = mem_save_size
         self.num_training_start_steps = num_training_start_steps
-
-        self.memory_fn = '{}.memory'.format(self.game_id)
-        self.memory_path = os.path.join(self.save_path, '{}.memory'.format(self.game_id))
-        self.memory_dir = os.path.dirname(self.memory_path)
-        self.memory_indices = np.random.permutation(10000)
-        self.memory_last_i = -1
 
         self.memory_queue = multiprocessing.Queue()
         self.save_count = multiprocessing.Value('i', 0)
@@ -158,6 +154,24 @@ class DeepQNetwork:
 
 
     def train_func(self):
+        # allocate memory
+        env = gym.make(self.game_id)
+        agent = self.model_class(env, initialize=False)
+
+        print('allocating memory', self.replay_max_memory_length)
+        self.memory_states = np.ndarray((self.replay_max_memory_length, agent.input_height, agent.input_width, agent.input_channels), dtype='uint8')
+        self.memory_actions = np.ndarray((self.replay_max_memory_length), dtype='uint8')
+        self.memory_rewards = np.ndarray((self.replay_max_memory_length, 1), dtype='uint32')
+        self.memory_next_states = np.ndarray((self.replay_max_memory_length, agent.input_height, agent.input_width, agent.input_channels), dtype='uint8')
+        self.memory_continues = np.ndarray((self.replay_max_memory_length, 1), dtype='uint8')
+        self.memory_size = 0
+        self.memory_index = 0
+        print('finished allocating memory')
+        
+        replay_memory = SumTree(self.replay_max_memory_length)
+
+
+
         save_steps = 10000
         copy_steps = 10000
 
@@ -166,9 +180,6 @@ class DeepQNetwork:
         train_report_interval = 1000
 
         # replay_memory = RingBuf(self.replay_max_memory_length)
-        replay_memory = SumTree(self.replay_max_memory_length)
-
-        env = gym.make(self.game_id)
 
         with self.get_session(load_model=True, save_model=True, env=env) as sess:
             try:
@@ -221,9 +232,6 @@ class DeepQNetwork:
                     #     feed_dict={sess.model.X_state: self.convert_state(next_states)})
                     # max_next_q_values = np.max(next_q_values, axis=1, keepdims=True)
                     # 
-                    max_next_q_values = sess.model.double_max_q_values.eval(
-                                            feed_dict={sess.model.X_state: next_states}) 
-                    y_val = rewards + continues * self.discount_rate * max_next_q_values
 
                     # online_actions, target_values = sess.run([sess.model.online_actions,
                     #                                           sess.model.target_q_values],
@@ -233,6 +241,15 @@ class DeepQNetwork:
                     #           * target_values[np.arange(target_values.shape[0]), 
                     #                                     online_actions].reshape(-1, 1)
 
+                    max_next_q_values = sess.model.double_max_q_values.eval(
+                                            feed_dict={sess.model.X_state: next_states}) 
+                    y_val = rewards + continues * self.discount_rate * max_next_q_values
+
+                    # y_val = sess.model.q_cur_and_next_q_values.eval(feed_dict={
+                    #                                     sess.model.X_rewards: rewards,
+                    #                                     sess.model.X_continues: continues,
+                    #                                     sess.model.X_state: next_states
+                    #                                 })
 
                     # Train the online DQN
                     tr_res, loss_val = sess.run([sess.model.training_op, 
@@ -252,7 +269,7 @@ class DeepQNetwork:
                     # And save regularly
                     if step % save_steps == 0:
                         print('saving tf model!!!')
-                        sess.save(self.save_path)
+                        sess.save(self.save_path_prefix)
                         sess.model.game_count.load(self.game_count.value)
                         self.save_count.value += 1
 
@@ -329,7 +346,6 @@ class DeepQNetwork:
                     next_state = None
                     done = False
                     losses = []
-                    num_lives = 0
 
                     if self.save_count.value > last_save_count:
                         print('save count changed reloading process')
@@ -381,9 +397,9 @@ class DeepQNetwork:
                                                          step)
 
 
-                        if info is not None and info['ale.lives'] != num_lives:
-                            action = 1
-                            num_lives = info['ale.lives']
+                        # if info is not None and info['ale.lives'] != num_lives:
+                        #     action = 1
+                        #     num_lives = info['ale.lives']
 
                         # Online DQN plays
                         obs, reward, done, info = env.step(action)
@@ -391,8 +407,8 @@ class DeepQNetwork:
 
                         game_score += reward
 
-                        if info is not None and info['ale.lives'] < num_lives:
-                            reward = -5
+                        # if info is not None and info['ale.lives'] < num_lives:
+                        #     reward = -5
 
                         obs = sess.model.preprocess_observation(obs)
                         state_frames.append(obs)
@@ -590,9 +606,7 @@ class DeepQNetwork:
             self.memory_indices = np.random.permutation(new_size)
             self.memory_last_i = -1
 
-
-        cols = [[], [], [], [], []] # state, action, reward, next_state, continue
-
+        memories = []
         while len(cols[0]) < batch_size:
             self.memory_last_i += 1
 
@@ -605,13 +619,9 @@ class DeepQNetwork:
             if idx >= len(replay_memory):
                 continue
 
-            memory = replay_memory[idx]
-            for col, value in zip(cols, memory):
-                col.append(value)
+            memories.append(replay_memory[idx])
 
-
-        cols = [np.array(col) for col in cols]
-        return cols[0], cols[1], cols[2], cols[3], cols[4]
+        return self.make_batch(memories)
 
 
     def sample_memories_sum_tree(self, sum_tree, batch_size):
@@ -620,7 +630,11 @@ class DeepQNetwork:
             s = random.random() * sum_tree.total()
             idx, score, memory = sum_tree.get(s)
 
-            memories.append(memory)
+            memories.append((self.memory_states[idx], 
+                             self.memory_actions[idx],
+                             self.memory_rewards[idx],
+                             self.memory_next_states[idx],
+                             self.memory_continues[idx]))
 
         return self.make_batch(memories)
 
@@ -659,7 +673,7 @@ class DeepQNetwork:
                 memories_with_priority.append(row)
 
         # now save
-        path = '{}-{:d}'.format(self.memory_path, int(time.time()))
+        path = '{}-{:d}'.format(self.memory_file_prefix, int(time.time()))
         print('saving memory to:', path, 'size:', len(memories_with_priority))
 
         with open(path, 'wb') as f:
@@ -679,10 +693,9 @@ class DeepQNetwork:
             try:
                 for col, value in zip(cols, memory):
                     col.append(value)
-            except TypeError:
-                print(cols)
-                print(memory)
-                raise
+            except TypeError as e:
+                print('TypeError: ', str(e), type(memory))
+                pass
 
         cols = [np.array(col) for col in cols]
         return cols[0], cols[1], cols[2], cols[3], cols[4]
@@ -690,14 +703,13 @@ class DeepQNetwork:
 
     def get_memory_file_list(self):
         fns = []
-        for fn in os.listdir(self.memory_dir):
-            match = re.match(self.memory_fn + '-(\\d+)', fn)
+        for fn in os.listdir(self.save_dir):
+            match = re.match(self.memory_file_prefix + '-(\\d+)', fn)
             if not match:
                 continue
-            path = os.path.join(self.memory_dir, fn)
+            path = os.path.join(self.save_dir, fn)
             with open(path, 'rb') as fin:
                 size = pickle.load(fin)
-
 
             fns.append((path, int(match.group(1)), int(size)))
 
@@ -724,7 +736,7 @@ class DeepQNetwork:
 
     def load_memory(self, memories, memory_fn):
         try:
-            print('loading memory from: ', memory_fn)
+            print('loading memory from:', memory_fn)
 
             with open(memory_fn, 'rb') as fin:
                 size = pickle.load(fin)
@@ -753,7 +765,14 @@ class DeepQNetwork:
 
     def add_sum_tree(self, memories, sum_tree):
         for state, action, reward, next_state, cont, loss in memories:
-            sum_tree.add(loss+0.001, (state, action, reward, next_state, cont))
+            idx = sum_tree.add(loss+0.001, 0)
+
+            self.memory_states[idx] = state
+            self.memory_actions[idx] = action
+            self.memory_rewards[idx] = reward
+            self.memory_next_states[idx] = next_state
+            self.memory_continues[idx] = cont
+
 
         # num_batches = int(math.ceil(len(memories) / batch_size))
 
@@ -809,25 +828,19 @@ class DeepQNetwork:
                 return self._sess.run(*args, **kwargs)
 
 
-            def save(self, path):
-                name = parent.game_id
-                save_path = os.path.join(path, name)
-
-                print('saving model: ', save_path)
-                self.saver.save(self._sess, save_path)
+            def save(self, save_path_prefix):
+                print('saving model: ', save_path_prefix)
+                self.saver.save(self._sess, save_path_prefix)
                 print('saved model')
 
 
-            def restore(self, path):
-                name = parent.game_id
-                save_path = os.path.join(path, name)
-
-                if not os.path.exists(save_path + '.index'):
-                    print('model does not exist:', save_path)
+            def restore(self, save_path_prefix):
+                if not os.path.exists(save_path_prefix + '.index'):
+                    print('model does not exist:', save_path_prefix)
                     return False
 
-                print('restoring model: ', save_path)
-                self.saver.restore(self._sess, save_path)
+                print('restoring model: ', save_path_prefix)
+                self.saver.restore(self._sess, save_path_prefix)
                 print('restored model')
 
                 return True
@@ -851,7 +864,7 @@ class DeepQNetwork:
 
                 loaded = False
                 if load_model:
-                    loaded = self.restore(parent.save_path)
+                    loaded = self.restore(parent.save_path_prefix)
 
                 if not loaded:
                     self._sess.run(tf.global_variables_initializer())
@@ -863,7 +876,7 @@ class DeepQNetwork:
 
             def close(self, ty=None, value=None, tb=None):
                 if save_model:
-                    self.save(parent.save_path)
+                    self.save(parent.save_path_prefix)
 
                 self._sess.__exit__(ty, value, tb)                    
                 self._sess.close()
