@@ -366,11 +366,14 @@ with tf.Session() as sess:
 
     print('dumping memory')
 
+    DUMP_SIZE = 50000
     while True:
+
         try:
-            with open(memory_fn, 'wb') as f:
-                pickle.dump(replay_memory, f)
-            break
+            for i in len(replay_memory) / DUMP_SIZE:
+                with open('{}-{:d}'.format(memory_fn, i), 'wb') as f:
+                    pickle.dump(replay_memory[i*DUMP_SIZE:(i+1)*DUMP_SIZE], f)
+                break
         except MemoryError:
             print('memory error!')
             size = int(len(replay_memory) * 0.80)

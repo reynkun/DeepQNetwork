@@ -3,22 +3,18 @@ import importlib
 
 parser = argparse.ArgumentParser()
 
-parser.add_argument('network')
-parser.add_argument('agent')
+parser.add_argument('-n', '--network', dest='network', default='deep_q_network_multi.DeepQNetwork')
+parser.add_argument('-a', '--agent', dest='agent', default='game_agent.GameAgent')
+parser.add_argument('-g', '--game-id', dest='game_id', default='MsPacman-v0')
+parser.add_argument('-i', '--interval', dest='interval', type=int, default=60)
+parser.add_argument('-e', '--use-epsilon', dest='use_epsilon', action='store_true', default=False)
 
 args = parser.parse_args()
 
 
 net_mod, net_cl_str = args.network.split('.')
-# net_cl = __import__(args.network)
-
-# net_cl = globals()[net_cl_str]
 
 ag_mod, ag_cl_str = args.agent.split('.')
-
-# ag_cl = __import__(args.agent)
-
-# ag_cl = globals()[ag_cl_str]
 
 mod = importlib.import_module(net_mod)
 net_cl = getattr(mod, net_cl_str)
@@ -26,6 +22,7 @@ net_cl = getattr(mod, net_cl_str)
 mod = importlib.import_module(ag_mod)
 ag_cl = getattr(mod, ag_cl_str)
 
-qn = net_cl('MsPacman-v0', ag_cl)
+print('args.game_id', args.game_id)
+qn = net_cl(args.game_id, ag_cl)
 
-qn.play()
+qn.play(args.use_epsilon, interval=args.interval)

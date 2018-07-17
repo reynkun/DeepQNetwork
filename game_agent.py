@@ -80,8 +80,10 @@ class GameAgent:
         #                                        self.online_actions]
         # self.double_q_values = tf.reshape(double_q_values, -1, 1)
 
-        copy_ops = [target_var.assign(online_vars[var_name]) 
-                    for var_name, target_var in target_vars.items()]
+        copy_ops = []
+        for var_name, target_var in target_vars.items():
+            copy_ops.append(target_var.assign(online_vars[var_name]))
+
         self.copy_online_to_target = tf.group(*copy_ops)
 
         self.make_train()
@@ -99,6 +101,7 @@ class GameAgent:
         hidden_initializer = tf.contrib.layers.variance_scaling_initializer()
 
         with tf.variable_scope(name) as scope:
+            # conv layers
             for num_maps, kernel_size, stride, padding, act_func in zip(conv_num_maps,
                                                                         conv_kernel_sizes,
                                                                         conv_strides,
@@ -111,10 +114,10 @@ class GameAgent:
                                         padding=padding,
                                         activation=act_func)
 
-            dense_input = tf.reshape(last, 
+            reshape_layer = tf.reshape(last, 
                               shape=[-1, last.shape[1] * last.shape[2] * last.shape[3]])
             # action output
-            last = tf.layers.dense(dense_input,
+            last = tf.layers.dense(reshape_layer,
                                    num_hidden,
                                    activation=tf.nn.relu,
                                    kernel_initializer=hidden_initializer)
@@ -123,7 +126,7 @@ class GameAgent:
                                       kernel_initializer=hidden_initializer)
 
             # value output
-            last = tf.layers.dense(dense_input,
+            last = tf.layers.dense(reshape_layer,
                                    num_hidden,
                                    activation=tf.nn.relu,
                                    kernel_initializer=hidden_initializer)
@@ -157,10 +160,11 @@ class GameAgent:
                                     axis=1, 
                                     keepdims=True)
 
-            error = tf.abs(self.y - q_value)
-            clipped_error = tf.clip_by_value(error, 0.0, 1.0)
-            linear_error = (error - clipped_error)
-            
+            self.error = tf.abs(self.y - q_value)
+            clipped_error = tf.clip_by_value(self.error, 0.0, 1.0)
+            linear_error = (self.error - clipped_error)
+
+            # self.loss_action = tf.multiply(tf.square(clipped_error), 0.5) + linear_error
             # self.loss = tf.reduce_mean(tf.square(clipped_error) + linear_error)
             self.loss = tf.reduce_mean(tf.multiply(tf.square(clipped_error), 0.5) + linear_error)
 
@@ -170,9 +174,11 @@ class GameAgent:
             self.game_count = tf.Variable(0, trainable=False, name='game_count')
             self.game_count_op = self.game_count.assign(tf.add(self.game_count, 1))
 
-            optimizer = tf.train.MomentumOptimizer(learning_rate, 
-                                                   momentum, 
-                                                   use_nesterov=True)
+            # optimizer = tf.train.MomentumOptimizer(learning_rate, 
+            #                                        momentum, 
+            #                                        use_nesterov=True)
+            optimizer = tf.train.RMSPropOptimizer(learning_rate=learning_rate, 
+                                                  momentum=momentum)
             self.training_op = optimizer.minimize(self.loss, 
                                                   global_step=self.step)
 
