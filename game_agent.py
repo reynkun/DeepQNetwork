@@ -63,23 +63,37 @@ class GameAgent:
 
 
     def make_model(self):
+        # set placeholders
         self.X_state = tf.placeholder(tf.uint8, shape=[None, 
                                                        self.input_height, 
                                                        self.input_width, 
                                                        self.input_channels])
+        self.X_action = tf.placeholder(tf.int32, shape=[None])
+        self.y = tf.placeholder(tf.float16, shape=[None, 1])
+
+        # save how many games we've played
+        self.game_count = tf.Variable(0, trainable=False, name='game_count')
+
+        # convert rgb int (0-255) to floats
         last = tf.cast(self.X_state, tf.float16)
         last = tf.divide(last, 255)
 
+        # make online and target q networks
         self.online_q_values, self.online_actions, online_vars = self.make_q_network(last, name="q_networks/online")
         self.target_q_values, self.target_actions, target_vars = self.make_q_network(last, name="q_networks/target")
 
-        # all_range = tf.range(0, tf.shape(self.target_q_values, out_type='int64')[0])
+        # self.max_online_q_values = tf.reduce_sum(self.online_q_values * tf.one_hot(self.X_action, self.num_outputs, dtype=tf.float16),
+        #                                          axis=1, 
+        #                                          keepdims=True)
+        self.double_max_q_values = tf.reduce_sum(self.target_q_values * tf.one_hot(self.online_actions, self.num_outputs, dtype=tf.float16),
+                                                    axis=1,
+                                                    keepdims=True)
+        # self.max_target_q_value = tf.reduce_sum(self.target_q_values * tf.one_hot(self.X_action, self.num_outputs, dtype=tf.float16),
+        #                                         axis=1, 
+        #                                         keepdims=True)
 
-        # print(self.online_actions.shape, all_range.shape, self.target_q_values.shape)
-        # double_q_values = self.target_q_values[all_range,
-        #                                        self.online_actions]
-        # self.double_q_values = tf.reshape(double_q_values, -1, 1)
 
+        # make copy online to target op
         copy_ops = []
         for var_name, target_var in target_vars.items():
             copy_ops.append(target_var.assign(online_vars[var_name]))
@@ -153,32 +167,28 @@ class GameAgent:
         print('learning rate: {:0.3f}, momentum: {:0.3f}'.format(learning_rate, momentum))
 
         with tf.variable_scope("train"):
-            self.X_action = tf.placeholder(tf.int32, shape=[None])
-            self.y = tf.placeholder(tf.float16, shape=[None, 1])
-
             q_value = tf.reduce_sum(self.online_q_values * tf.one_hot(self.X_action, self.num_outputs, dtype=tf.float16),
                                     axis=1, 
                                     keepdims=True)
 
-            self.error = tf.abs(self.y - q_value)
-            clipped_error = tf.clip_by_value(self.error, 0.0, 1.0)
-            linear_error = (self.error - clipped_error)
-
+            # self.error = tf.abs(self.y - q_value)
+            # clipped_error = tf.clip_by_value(self.error, 0.0, 1.0)
+            # linear_error = (self.error - clipped_error)
             # self.loss_action = tf.multiply(tf.square(clipped_error), 0.5) + linear_error
             # self.loss = tf.reduce_mean(tf.square(clipped_error) + linear_error)
-            self.loss = tf.reduce_mean(tf.multiply(tf.square(clipped_error), 0.5) + linear_error)
+            # self.loss = tf.reduce_mean(tf.multiply(tf.square(clipped_error), 0.5) + linear_error)
+            self.losses = tf.losses.huber_loss(self.y, q_value, reduction=tf.losses.Reduction.NONE)
+            self.loss = tf.reduce_mean(self.losses)
 
             self.step = tf.Variable(0, 
                                     trainable=False, 
                                     name='step')
-            self.game_count = tf.Variable(0, trainable=False, name='game_count')
-            self.game_count_op = self.game_count.assign(tf.add(self.game_count, 1))
 
-            # optimizer = tf.train.MomentumOptimizer(learning_rate, 
-            #                                        momentum, 
-            #                                        use_nesterov=True)
-            optimizer = tf.train.RMSPropOptimizer(learning_rate=learning_rate, 
-                                                  momentum=momentum)
+            optimizer = tf.train.MomentumOptimizer(learning_rate, 
+                                                   momentum, 
+                                                   use_nesterov=True)
+            # optimizer = tf.train.RMSPropOptimizer(learning_rate=learning_rate, 
+            #                                       momentum=momentum)
             self.training_op = optimizer.minimize(self.loss, 
                                                   global_step=self.step)
 
