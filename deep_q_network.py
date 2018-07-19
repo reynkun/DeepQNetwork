@@ -6,296 +6,495 @@ import random
 import datetime
 import multiprocessing
 import pickle
+import signal
+import json
 
 from collections import deque
-
-import matplotlib.animation as animation
-import matplotlib.pyplot as plt
 
 import gym
 import tensorflow as tf
 import numpy as np
 
-from PIL import Image, ImageFont, ImageDraw
-from sklearn.base import BaseEstimator
-from sklearn.metrics import accuracy_score, recall_score
+from sum_tree import SumTree
+from render import render_game
 
 
 def time_string():
     return time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())
 
 
-def read_image(path):
-    return np.array(Image.open(path)) / 255.0
+class ReplayMemory:
+    def __init__(self, max_capacity, input_width, input_height, input_channels):
+        self.memory_states = np.ndarray((max_capacity, input_height, input_width, input_channels), dtype='float16')
+        self.memory_actions = np.ndarray((max_capacity), dtype='uint8')
+        self.memory_rewards = np.ndarray((max_capacity, 1), dtype='uint32')
+        self.memory_next_states = np.ndarray((max_capacity, input_height, input_width, input_channels), dtype='float16')
+        self.memory_continues = np.ndarray((max_capacity, 1), dtype='bool')
+
+        self.memory_index = 0
+        self.max_capacity = max_capacity
+        self.size = 0
 
 
-def render_state(state, repeat=True, interval=800):
-    def update_scene(num, frames, patch):
-        patch.set_data(frames[num])
-        return patch,
+    def append(self, state, action, reward, next_state, cont):
+        self.memory_states[self.memory_index] = state
+        self.memory_actions[self.memory_index] = action
+        self.memory_rewards[self.memory_index] = reward
+        self.memory_next_states[self.memory_index] = next_state
+        self.memory_continues[self.memory_index] = cont
+
+        self.increment_index()
 
 
-    frames = []
-    for i in range(state.shape[2]):
-        # print(state[:,:,i].shape)
-        shape = state[:,:,i].shape
-        frame = state[:,:,i].reshape(shape[0], shape[1], 1)
+    def increment_index(self):
+        self.memory_index += 1
 
-        img_dat = np.concatenate((frame, frame, frame), axis=2)
-        img_dat = Image.fromarray((img_dat * 255).astype('uint8'))
-        draw = ImageDraw.Draw(img_dat)
-        draw.text((0,0), "fr {}".format(i))
+        if self.memory_index >= self.max_capacity:
+            self.memory_index = 0
 
-        frames.append(img_dat)
-
-    plt.close()  # or else nbagg sometimes plots in the previous cell
-    fig = plt.figure()
-    patch = plt.imshow(frames[0])
-    plt.axis('on')
-
-    video = animation.FuncAnimation(fig, 
-                                   update_scene, 
-                                   fargs=(frames, patch), 
-                                   frames=len(frames), 
-                                   repeat=repeat, 
-                                   interval=interval)
-    plt.show()
-
-    return video
+        if self.size < self.max_capacity:
+            self.size += 1
 
 
-def render_game(game_frames, actions, repeat=True, interval=30):
-    def update_scene(num, frames, patch):
-        patch.set_data(frames[num])
-        return patch,
 
-
-    frames = []
-    for i in range(len(game_frames)):
-        img_dat = Image.fromarray(game_frames[i])
-        draw = ImageDraw.Draw(img_dat)
-        draw.text((0,0), "fr {} act {:d}".format(i, actions[i]))
-
-        frames.append(img_dat)
-
-
-    plt.close()  # or else nbagg sometimes plots in the previous cell
-    fig = plt.figure()
-    patch = plt.imshow(frames[0])
-    plt.axis('on')
-
-    video = animation.FuncAnimation(fig, 
-                                    update_scene, 
-                                    fargs=(frames, patch), 
-                                    frames=len(frames), 
-                                    repeat=repeat, 
-                                    interval=interval)
-    plt.show()
-
-    return video
-
-
-class RingBuf:
-    def __init__(self, size):
-        # Pro-tip: when implementing a ring buffer, always allocate one extra element,
-        # this way, self.start == self.end always means the buffer is EMPTY, whereas
-        # if you allocate exactly the right number of elements, it could also mean
-        # the buffer is full. This greatly simplifies the rest of the code.
-        self.data = [None] * (size + 1)
-        self.start = 0
-        self.end = 0
-        
-    def append(self, element):
-        self.data[self.end] = element
-        self.end = (self.end + 1) % len(self.data)
-        # end == start and yet we just added one element. This means the buffer has one
-        # too many element. Remove the first element by incrementing start.
-        if self.end == self.start:
-            self.start = (self.start + 1) % len(self.data)
-        
-    def __getitem__(self, idx):
-        return self.data[(self.start + idx) % len(self.data)]
-    
     def __len__(self):
-        if self.end < self.start:
-            return self.end + len(self.data) - self.start
-        else:
-            return self.end - self.start
-        
-    def __iter__(self):
-        for i in range(len(self)):
-            yield self[i]
-    
+        return self.size
+
+
+    def __getitem__(self, idx):
+        new_idx = (self.memory_index + idx) % self.max_capacity
+
+        return (self.memory_states[new_idx],
+                self.memory_actions[new_idx],
+                self.memory_rewards[new_idx],
+                self.memory_next_states[new_idx],
+                self.memory_continues[new_idx])
+
+
+DEFAULT_OPTIONS = {
+    'save_dir': './models',
+    'eps_min': 0.1,
+    'eps_max': 1.0,
+    'eps_decay_steps': 2000000,
+    'discount_rate': 0.99,
+    'mem_save_size': 10000,
+    'batch_size': 32,
+    'num_game_frames_before_training': 10000,
+    'testing_predict': False,
+    'testing_train': False,
+    'testing_weights': False,
+    'model_save_prefix': None,
+    'replay_max_memory_length': 500000,
+    'max_num_training_steps': 10000000,
+    'num_game_frames_before_training': 10000,
+}
+
 
 class DeepQNetwork:
     def __init__(self, 
-                 game_id='MsPacman-v0',
-                 model_class=None, 
-                 batch_size=32, 
-                 num_epoch=1000,
-                 save_path='./models',
-                 verbose=True):
+                 game_id,
+                 model_class, 
+                 model_save_prefix=None,
+                 options=None):
         self.model_class = model_class
         self.game_id = game_id
-        self.num_epoch = num_epoch
-        self.batch_size = int(batch_size)
-        self.save_path = save_path
-        self.verbose = verbose
 
-        self.eps_min = 0.1
-        self.eps_max = 1.0
-        self.eps_decay_steps = 1000000
+        if options:
+            self.options = options
+        else:
+            self.options = {}
+            self.options.update(DEFAULT_OPTIONS)
+
+        self.save_dir = self.options['save_dir']
+
+        if self.options['model_save_prefix'] is None:
+            self.options['model_save_prefix'] = self.game_id
+
+        self.file_prefix = '{}'.format(self.options['model_save_prefix'])
+        self.save_path_prefix = os.path.join(self.save_dir, self.file_prefix)
+        self.memory_file_prefix = '{}.memory'.format(self.file_prefix)
+
+        env = gym.make(self.game_id)
+        self.num_outputs = env.action_space.n
+
+        # run game settings
+        self.eps_min = self.options['eps_min']
+        self.eps_max = self.options['eps_max']
+        self.eps_decay_steps = self.options['eps_decay_steps']
+        self.discount_rate = self.options['discount_rate']
+        self.mem_save_size = self.options['mem_save_size']
+
+        self.num_state_frames = 4
+
+        # train settings
+        self.max_num_training_steps = self.options['max_num_training_steps']
+        self.replay_max_memory_length = self.options['replay_max_memory_length']
+        self.num_game_frames_before_training = self.options['num_game_frames_before_training']
+        self.memory_indices = []
+        self.memory_last_i = -1
+        self.batch_size = self.options['batch_size']
+
+        # interprocess communication
+        self.memory_queue = multiprocessing.Queue()
+        self.save_count = multiprocessing.Value('i', 0)
+        self.game_count = multiprocessing.Value('i', 0)
+
+        self.testing_predict = self.options['testing_predict']
+        self.testing_train = self.options['testing_train']
+        self.testing_weights = self.options['testing_weights']
 
 
-    def fit(self):
-        p = multiprocessing.Process(target=self.fit_func)
-        p.start()
-        p.join()
+        path = os.path.join(self.save_dir, '{}.conf'.format(self.file_prefix))
+        if not os.path.exists(path):
+            with open(path, 'w') as fo:
+                print(self.options)
+                json.dump(self.options, fo, sort_keys=True, indent=4)
 
 
     def train(self):
-        max_acc = 0
-        max_rec = 0
+        p_t = multiprocessing.Process(target=self.train_func)
+        p_t.start()
+
+        while True:
+            g_t = multiprocessing.Process(target=self.run_game_func)
+            g_t.start()
+
+            while g_t.is_alive():
+                if not p_t.is_alive():
+                    print('train process not not alive!')
+                    os.kill(g_t.pid, signal.SIGTERM)
+                    raise Exception('train process not alive')
+                g_t.join(5)
+
+            if g_t.exitcode != 0:
+                print('game process nonzero exit!')
+                os.kill(p_t.pid, signal.SIGINT)
+                break
+
+        p_t.join()
+
+
+    def train_func(self):
+        # allocate memory
+        env = gym.make(self.game_id)
+        agent = self.model_class(env, initialize=False, options=self.options)
+
+        self.replay_memory = ReplayMemory(self.replay_max_memory_length,
+                                          agent.input_height,
+                                          agent.input_width,
+                                          agent.input_channels)
+        
+        if self.options['use_priority']:
+            replay_sum_tree = SumTree(self.replay_max_memory_length)
+        else:
+            replay_sum_tree = None
 
         save_steps = 10000
         copy_steps = 10000
 
-        num_state_frames = 4
-        num_training_start_steps = 10000
-        max_num_training = 20000000
-
-        discount_rate = 0.99
-
-        game_scores = deque(maxlen=25)
-        report_interval = 60
-
-        self.replay_max_memory_length = 150000
-        mem_save_steps = int(self.replay_max_memory_length / 2)
-        self.replay_memory = RingBuf(self.replay_max_memory_length)        
-        # self.replay_memory = deque(maxlen=self.replay_max_memory_length)
-
-        self.memory_fn = '{}.memory'.format(self.game_id)
-        self.memory_path = os.path.join(self.save_path, '{}.memory'.format(self.game_id))
-        self.memory_dir = os.path.dirname(self.memory_path)
-
-        self.memory_indices = np.random.permutation(num_training_start_steps)
-        self.memory_last_i = -1
-
-        self.load_memory()
-
-        print('game_id:', self.game_id)
-        self.env = gym.make(self.game_id)
-        self.num_outputs = self.env.action_space.n
+        train_report_interval = 1000
 
 
-        with self.get_session(load_model=True) as sess:
+        with self.get_session(load_model=True, save_model=True, env=env) as sess:
             try:
+                fns = self.get_memory_file_list()
+
+                for path, date, size in sorted(fns, key=lambda x:x[1], reverse=True):
+                    memories = []
+                    self.load_memory(memories, path)
+                    self.add_memories(memories, replay_sum_tree)
+                    del memories
+
+                    if len(self.replay_memory) >= self.replay_max_memory_length:
+                        break
+
+
                 iteration = 0
                 report_start_time = time.time()
                 report_last_iteration = 0
                 report_rate = 0
-                step = 0
+                step = sess.model.step.eval()
+                report_last_step = step
+                losses = []
 
-                print('copying to target network')
-                self.model.copy_online_to_target.run()
+                while len(self.replay_memory) < self.num_game_frames_before_training:
+                    print('waiting for memory', self.num_game_frames_before_training, 'cur size:', len(self.replay_memory))
+                    fn = self.memory_queue.get()
+                    memories = []
+                    self.load_memory(memories, fn)
+                    self.add_memories(memories, replay_sum_tree)
+                    del memories
 
-                while step < max_num_training:
+
+                while step < self.max_num_training_steps:
+                    iteration += 1
+                    step = sess.model.step.eval()
+
+                    while self.memory_queue.qsize():
+                        fn = self.memory_queue.get()
+
+                        memories = []
+                        self.load_memory(memories, fn)
+                        self.add_memories(memories, replay_sum_tree)
+                        del memories
+
+                    # Sample memories and use the target DQN to produce the target Q-Value
+                    # X_state_val, X_action_val, rewards, next_states, continues = self.sample_memories(replay_sum_tree, self.options['batch_size'])
+                    if self.options['use_priority']:
+                        states, actions, rewards, next_states, continues = self.sample_memories_sum_tree(replay_sum_tree, self.batch_size)
+                    else:
+                        states, actions, rewards, next_states, continues = self.sample_memories(self.replay_memory, self.batch_size)
+
+
+
+                    target_max_q_values = self.get_target_max_q_values(sess, rewards, continues, next_states)
+
+
+                    if self.testing_train:
+                        # Train the online DQN
+                        tr_res, \
+                        online_q_values, \
+                        online_max_q_values, \
+                        losses, \
+                        loss_val = sess.run([sess.model.training_op,
+                                             sess.model.online_q_values,
+                                             sess.model.online_max_q_values,
+                                             sess.model.losses,
+                                             sess.model.loss], 
+                                            feed_dict={
+                                                sess.model.X_state: states,
+                                                sess.model.X_action: actions,
+                                                sess.model.y: target_max_q_values
+                                            })
+
+                        for i in range(states.shape[0]):
+                            print(i, 
+                                  actions[i], 
+                                  online_q_values[i], 
+                                  online_max_q_values[i], 
+                                  target_max_q_values[i], 
+                                  losses[i])
+
+                        
+                    else:
+                        # Train the online DQN
+                        tr_res, loss_val = sess.run([sess.model.training_op,
+                                                     sess.model.loss], 
+                                                    feed_dict={
+                                                        sess.model.X_state: states,
+                                                        sess.model.X_action: actions,
+                                                        sess.model.y: target_max_q_values
+                                                    })
+
+
+
+                    losses.append(loss_val)
+
+                    # Regularly copy the online DQN to the target DQN
+                    if step % copy_steps == 0:
+                        if self.testing_weights:
+                            for scope in ['q_networks/online']:
+                                for var in tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES,
+                                                             scope=scope):
+                                    print(var.name)
+                                    parts = var.name.split('/')
+                                    target_name = '/'.join((parts[0], 'target', '/'.join(parts[2:])))
+                                    print(target_name)
+
+                                    online_weights, target_weights = sess.run([tf.get_default_graph().get_tensor_by_name(var.name),
+                                                                               tf.get_default_graph().get_tensor_by_name(target_name)])
+                                    print(np.min(online_weights), np.min(target_weights))
+                                    print(np.max(online_weights), np.max(target_weights))
+                                    print(np.average(online_weights), np.average(target_weights))
+
+                        print('{} [train] copying to target network'.format(time_string()))
+                        sess.model.copy_online_to_target.run()
+
+                        # for var in tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES):
+                        #     print(var.name)
+
+                        if self.testing_weights:
+                            for scope in ['q_networks/online']:
+                                for var in tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES,
+                                                             scope=scope):
+                                    print(var.name)
+                                    parts = var.name.split('/')
+                                    target_name = '/'.join((parts[0], 'target', '/'.join(parts[2:])))
+                                    print(target_name)
+
+                                    online_weights, target_weights = sess.run([tf.get_default_graph().get_tensor_by_name(var.name),
+                                                                               tf.get_default_graph().get_tensor_by_name(target_name)])
+
+                                    print(np.min(online_weights), np.min(target_weights))
+                                    print(np.max(online_weights), np.max(target_weights))
+                                    print(np.average(online_weights), np.average(target_weights))
+
+                                    # assert np.min(online_weights) == np.min(target_weights)
+                                    # assert np.max(online_weights) == np.max(target_weights)
+                                    # assert np.average(online_weights) == np.average(target_weights)
+
+                                    # print('key:', var.name)
+                                    # parts = var.name.split('/')
+                                    # num_parts = len(parts)
+                                    # found = False
+                                    # for i in range(num_parts):
+                                    #     try:
+                                    #         name = '/'.join(var.name.split('/')[i:])
+                                    #         print('  trying', name)
+                                    #         weights = tf.get_default_graph().get_tensor_by_name(name)
+                                    #         print('  found', name, weights)
+                                    #         found = True
+                                    #         break
+                                    #     except (KeyError, ValueError):
+                                    #         pass
+                                    # if not found:
+                                    #     print('did not find key')
+
+                    # And save regularly
+                    if step % save_steps == 0:
+                        sess.save(self.save_path_prefix)
+                        sess.model.game_count.load(self.game_count.value)
+                        self.save_count.value += 1
+
+                    # report 
+                    if step % train_report_interval == 0:
+                        elapsed = time.time() - report_start_time
+                        if elapsed > 0:
+                            frame_rate = (step - report_last_step) / elapsed
+                        else:
+                            frame_rate = 0.0
+
+                        report_last_step = step
+                        report_start_time = time.time()
+
+                        if len(losses) > 0:
+                            avg_loss = sum(losses) / len(losses)
+                        else:
+                            avg_loss = 0
+
+                        losses = []
+
+                        epsilon = self.epsilon(step)
+
+                        print('{} [train] step {} avg loss: {:0.3f} mem: {:d} fr: {:0.1f}'.format(
+                            time_string(),
+                            step,
+                            avg_loss,
+                            len(self.replay_memory),
+                            frame_rate))
+                            
+            except KeyboardInterrupt:
+                print('interrupted')
+
+            sess.model.game_count.load(self.game_count.value)
+
+        env.close()
+
+
+    def run_game_func(self):
+        game_scores = deque(maxlen=1000)
+        max_qs = deque(maxlen=1000)
+        report_interval = 60
+        max_game_length = 50000
+
+        replay_memory = []        
+
+        env = gym.make(self.game_id)
+
+        print('run_game_func')
+
+        with self.get_session(load_model=True, save_model=False, env=env) as sess:
+            iteration = 0
+            report_start_time = time.time()
+            report_last_iteration = 0
+            report_rate = 0
+            step = sess.run([sess.model.step])[0]
+            info = None
+
+            if self.game_count.value <= 0:
+                self.game_count.value = sess.run([sess.model.game_count])[0]
+                print('game_count:', self.game_count.value)
+
+            last_save_count = self.save_count.value
+
+            try:
+                while True:
                     epoch_start_time = time.time()
                     epoch_count = 0
 
                     total_max_q = 0.0
                     game_length = 0
                     game_score = 0
-                    state_frames = deque(maxlen=num_state_frames)
+                    state_frames = deque(maxlen=self.num_state_frames)
                     action = 0
                     state = None
                     next_state = None
                     done = False
                     losses = []
 
-                    obs = self.env.reset()
+                    if self.save_count.value > last_save_count:
+                        print('save count changed reloading process')
+                        break
 
-                    if hasattr(self.model, 'skip_steps'):
-                        for skip in range(self.model.skip_steps):
-                            obs, reward, done, info = self.env.step(0)
+                    self.game_count.value += 1
 
-                    obs = self.model.preprocess_observation(obs)
+                    obs = env.reset()
+
+                    if hasattr(sess.model, 'skip_steps'):
+                        for skip in range(sess.model.skip_steps):
+                            obs, reward, done, info = env.step(0)
+                            sess.model.on_info(info)
+
+                    obs = sess.model.preprocess_observation(obs)
                     state_frames.append(obs)
 
                     while not done:
                         iteration += 1
                         game_length += 1
-                        step = self.model.step.eval()
+
+                        if game_length > max_game_length:
+                            print('game too long, breaking')
+                            break
+
+                        step = sess.run([sess.model.step])[0]
 
                         # if game_length % num_skip_frames == 0 and len(state_frames) >= num_state_frames:
-                        if len(state_frames) >= num_state_frames:
-                            next_state = np.concatenate(state_frames, axis=2)
+                        if len(state_frames) >= self.num_state_frames:
+                            next_state = self.make_state(state_frames)
 
                             if state is not None:
-                                self.append_replay(state, action, reward, next_state, 1)
+                                self.append_replay(replay_memory, state, action, reward, next_state, 1)
+
+                                if len(replay_memory) % self.mem_save_size == 0:
+                                    self.clear_old_memory()
+                                    self.save_memory(replay_memory, sess=sess)
+                                    replay_memory = []
 
                             state = next_state
 
-                            if iteration < 10:
-                                print('state:', state)
-
                             # Online DQN evaluates what to do
-                            q_values = self.model.online_q_values.eval(feed_dict={self.model.X_state: [self.convert_state(next_state)]})
+                            q_values = sess.model.online_q_values.eval(feed_dict={sess.model.X_state: [next_state]})
                             total_max_q += q_values.max()
 
                             last_action = action
+
                             action = self.epsilon_greedy(q_values,
                                                          step)
 
+
                         # Online DQN plays
-                        obs, reward, done, info = self.env.step(action)
+                        obs, reward, done, info = env.step(action)
 
                         game_score += reward
 
-                        obs = self.model.preprocess_observation(obs)
+                        obs = sess.model.preprocess_observation(obs)
                         state_frames.append(obs)
 
-                        if done: 
-                            continue
-
-                        if len(self.replay_memory) < num_training_start_steps:
-                            # only train after warmup period and at regular intervals
-                            continue 
-
-                        # Sample memories and use the target DQN to produce the target Q-Value
-                        X_state_val, X_action_val, rewards, X_next_state_val, continues = self.sample_memories(self.batch_size)
-
-                        next_q_values = self.model.target_q_values.eval(
-                            feed_dict={self.model.X_state: self.convert_state(X_next_state_val)})
-                        max_next_q_values = np.max(next_q_values, axis=1, keepdims=True)
-                        y_val = rewards + continues * discount_rate * max_next_q_values
-
-                        # Train the online DQN
-                        tr_res, loss_val = sess.run([self.model.training_op, 
-                                                     self.model.loss], 
-                                                    feed_dict={
-                                                        self.model.X_state: self.convert_state(X_state_val),
-                                                        self.model.X_action: X_action_val,
-                                                        self.model.y: y_val
-                                                    })
-                        losses.append(loss_val)
-
-                        # Regularly copy the online DQN to the target DQN
-                        if step % copy_steps == 0:
-                            print('copying to target network')
-                            self.model.copy_online_to_target.run()
-
-                        # And save regularly
-                        if step % save_steps == 0:
-                            sess.save(self.save_path)
-
-                        if step % mem_save_steps == 0:
-                            self.save_memory()
 
                     # game done, save last step
-                    next_state = np.concatenate(state_frames, axis=2)
+                    next_state = self.make_state(state_frames)
 
-                    self.append_replay(state, action, reward, next_state, 0)
+                    self.append_replay(replay_memory, state, action, reward, next_state, 0)
 
                     state = next_state
 
@@ -316,117 +515,120 @@ class DeepQNetwork:
                         report_last_iteration = iteration
                         report_start_time = time.time()
 
-
-                    if len(losses) > 0:
-                        avg_loss = sum(losses) / len(losses)
-                    else:
-                        avg_loss = 0
-
-                    _, game_count = sess.run([self.model.game_count_op, self.model.game_count])
-
                     game_scores.append(game_score)
 
                     if len(game_scores) > 0:
+
                         avg_score = sum(game_scores) / len(game_scores)
                     else: 
                         avg_score = 0
 
-                    epsilon = max(self.eps_min, self.eps_max - (self.eps_max-self.eps_min) * step/self.eps_decay_steps)
-                    print('{} {}/{} game {} len: {:d} max_q: {:0.3f} loss: {:0.3f} score: {:0.1f} avg: {:0.1f} mem: {:d} eps: {:0.3f} fr: {:0.1f}/{:0.1f}'.format(
-                                                                                   time_string(),
-                                                                                   iteration,
-                                                                                   step,
-                                                                                   game_count, 
-                                                                                   game_length, 
-                                                                                   mean_max_q,
-                                                                                   avg_loss,
-                                                                                   game_score, 
-                                                                                   avg_score,
-                                                                                   len(self.replay_memory),
-                                                                                   epsilon,
-                                                                                   frame_rate,
-                                                                                   report_rate))
-                            
+                    max_qs.append(mean_max_q)
+
+                    avg_max_q = sum(max_qs) / len(max_qs)
+
+                    epsilon = self.epsilon(step)
+
+                    if self.game_count.value % 100 == 0:
+                        print('{} [game] step {} game {} len: {:d} max_q: {:0.3f}/{:0.3f} score: {:0.1f} avg: {:0.1f} mem: {:d} eps: {:0.3f} fr: {:0.1f}/{:0.1f}'.format(
+                                   time_string(),
+                                   step,
+                                   self.game_count.value, 
+                                   game_length, 
+                                   mean_max_q,
+                                   avg_max_q,
+                                   game_score, 
+                                   avg_score,
+                                   len(replay_memory),
+                                   epsilon,
+                                   frame_rate,
+                                   report_rate))
+
             except KeyboardInterrupt:
-                print('interrupted')
-                pass
+                print('run game interrupted')
 
-        self.env.close()
-        self.save_memory()
+            if len(replay_memory) > 0:
+                self.clear_old_memory()
+                self.save_memory(replay_memory, sess=sess)
+
+        env.close()
+
+        return 0
 
 
-    def play_func(self):
-        num_state_frames = 4
-        num_training_start_steps = 1000
-        batch_size = 32
+    def play(self, num_games=1, use_epsilon=False, interval=60, no_display=False):
+        env = gym.make(self.game_id)
+        env._max_episode_steps = 1000
 
-        discount_rate = 0.99
+        with self.get_session(load_model=True, save_model=False, env=env) as sess:
+            game_scores = []
 
-        print('game_id:', self.game_id)
-        self.env = gym.make(self.game_id)
-        self.num_outputs = self.env.action_space.n
-
-        with self.get_session(load_model=True, save_model=False) as sess:
             try:
-                iteration = 0
+                for i in range(num_games):
+                    iteration = 0
+                    step = sess.model.step.eval()
 
-                for epoch in range(self.num_epoch):
                     epoch_start_time = time.time()
 
                     total_max_q = 0.0
                     game_length = 0
                     game_score = 0
-                    state_frames = deque(maxlen=num_state_frames)
+                    state_frames = deque(maxlen=self.num_state_frames)
                     game_frames = []
-                    game_scores = []
                     actions = []
                     action = 0
                     state = None
                     next_state = None
                     done = False
+                    num_lives = 0
+                    info = None
 
-                    obs = self.env.reset()
+                    obs = env.reset()
 
-                    if hasattr(self.model, 'skip_steps'):
-                        for skip in range(self.model.skip_steps):
-                            obs, reward, done, info = self.env.step(0)
+                    if hasattr(sess.model, 'skip_steps'):
+                        for skip in range(sess.model.skip_steps):
+                            obs, reward, done, info = env.step(0)
 
                     game_frames.append(obs)
                     actions.append(action)
-                    obs = self.model.preprocess_observation(obs)
+                    obs = sess.model.preprocess_observation(obs)
                     state_frames.append(obs)
 
                     while not done:
                         iteration += 1
                         game_length += 1
 
-                        # if game_length % num_skip_frames == 0 and len(state_frames) >= num_state_frames:
-                        if len(state_frames) >= num_state_frames:
-                            next_state = np.concatenate(state_frames, axis=2)
+                        # if game_length % num_skip_frames == 0 and len(state_frames) >= self.num_state_frames:
+                        if len(state_frames) >= self.num_state_frames:
+                            next_state = self.make_state(state_frames)
 
                             # Online DQN evaluates what to do
-                            q_values = self.model.online_q_values.eval(feed_dict={self.model.X_state: [next_state]})
-                            # action = self.epsilon_greedy(q_values,
-                            #                              step)
-                            action = np.argmax(q_values)
+                            q_values = sess.model.online_q_values.eval(feed_dict={sess.model.X_state: [next_state]})
+                            if use_epsilon:
+                                action = self.epsilon_greedy(q_values,
+                                                             step)
+                            else:
+                                action = np.argmax(q_values)
 
                         # Online DQN plays
-                        obs, reward, done, info = self.env.step(action)
+                        obs, reward, done, info = env.step(action)
 
                         game_score += reward
 
                         game_frames.append(obs)
                         actions.append(action)
-                        obs = self.model.preprocess_observation(obs)
+                        obs = sess.model.preprocess_observation(obs)
                         state_frames.append(obs)
 
-                        if done: 
-                            continue
 
                     # game done, save last step
-                    next_state = np.concatenate(state_frames, axis=2)# 
+                    next_state = self.make_state(state_frames)
                     state = next_state
-                    mean_max_q = total_max_q / game_length
+
+                    if game_length > 0:
+                        mean_max_q = total_max_q / game_length
+                    else:
+                        mean_max_q = 0
 
                     game_scores.append(game_score)
 
@@ -437,62 +639,65 @@ class DeepQNetwork:
 
                     max_score = max(game_scores)
 
+                    min_score = min(game_scores)
 
-                    print('game {} len: {:d} max_q: {:0.3f} score: {:0.1f} avg: {:0.1f} max: {:0.1f}'.format(
-                                                                                   epoch, 
+                    std_dev = np.std(game_scores)
+
+                    print('step: {:d} game {:d} len: {:d} max_q: {:0.3f} score: {:0.1f} avg: {:0.1f} max: {:0.1f} min: {:0.1f} std: {:0.2f}'.format(
+                                                                                   step,
+                                                                                   i,
                                                                                    game_length, 
                                                                                    mean_max_q,
                                                                                    game_score, 
                                                                                    avg_score,
-                                                                                   max_score))
-                    render_game(game_frames, actions, repeat=False)
+                                                                                   max_score,
+                                                                                   min_score, 
+                                                                                   std_dev))
+                    if not no_display:                                               
+                        render_game(game_frames, actions, repeat=False, interval=interval)
 
 
-                            
+                                
             except KeyboardInterrupt:
                 print('interrupted')
                 raise
 
-        self.env.close()
+        env.close()
 
 
-    def append_replay(self, state, action, reward, next_state, cont):
-        self.replay_memory.append((state, action, np.array([reward]), next_state, np.array([cont])))
+    # def calculate_loss(self, ):
+        # next_q_values = sess.model.target_max_q_values.eval(
+        #     feed_dict={sess.model.X_state: self.convert_state(next_states)})
+        # max_next_q_values = np.max(next_q_values, axis=1, keepdims=True)
+        # y_val = rewards + continues * discount_rate * max_next_q_values
 
+        # online_actions, target_values = sess.run([sess.model.online_actions,
+        #                                           sess.model.target_max_q_values],
+        #                                          feed_dict={sess.model.X_state: next_states})
+
+        # y_val = rewards + continues * self.discount_rate \
+        #           * target_values[np.arange(target_values.shape[0]), 
+        #                                     online_actions].reshape(-1, 1)
+
+
+
+    def append_replay(self, replay_memory, state, action, reward, next_state, cont):
+        replay_memory.append((state, action, np.array([reward]), next_state, np.array([cont])))
 
 
     def convert_state(self, state):
         return state        
 
 
-    def sample_memories(self, batch_size):
-        if len(self.memory_indices) < len(self.replay_memory):
-            new_size = min([int(len(self.memory_indices) * 2), self.replay_max_memory_length])
+    def sample_memories(self, replay_memory, batch_size):
+        if len(self.memory_indices) < len(replay_memory):
+            print('resampling random memory list')
+            new_size = min([int(len(replay_memory) * 2), self.replay_max_memory_length])
             self.memory_indices = np.random.permutation(new_size)
             self.memory_last_i = -1
 
-        # cols = [[], [], [], [], []] # state, action, reward, next_state, continue
-
-        # while len(cols[0]) < batch_size:
-        #     self.memory_last_i += 1
-        #     if self.memory_last_i >= len(self.memory_indices):
-        #         self.memory_last_i = 0
-        #     i = self.memory_last_i
-        #     idx = self.memory_indices[i]
-        #     if i > len(self.replay_memory):
-        #         continue
-        #     memory = self.replay_memory[idx]
-        #     for col, value in zip(cols, memory):
-        #         col.append(value)
-
-
-        # cols = [np.array(col) for col in cols]
-        # return cols[0], cols[1], cols[2].reshape(-1, 1), cols[3], cols[4].reshape(-1, 1)
-
-
-        cols = [[], [], [], [], []] # state, action, reward, next_state, continue
-
-        while len(cols[0]) < batch_size:
+        memories = []
+        while len(memories) < batch_size:
             self.memory_last_i += 1
 
             if self.memory_last_i >= len(self.memory_indices):
@@ -501,16 +706,43 @@ class DeepQNetwork:
             i = self.memory_last_i
             idx = self.memory_indices[i]
 
-            if idx >= len(self.replay_memory):
+            if idx >= len(replay_memory):
                 continue
 
-            memory = self.replay_memory[idx]
-            for col, value in zip(cols, memory):
-                col.append(value)
+            memories.append((self.replay_memory.memory_states[idx], 
+                             self.replay_memory.memory_actions[idx],
+                             self.replay_memory.memory_rewards[idx],
+                             self.replay_memory.memory_next_states[idx],
+                             self.replay_memory.memory_continues[idx]))
+
+        return self.make_batch(memories)
 
 
-        cols = [np.array(col) for col in cols]
-        return cols[0], cols[1], cols[2], cols[3], cols[4]
+    def sample_memories_sum_tree(self, sum_tree, batch_size):
+        memories = []
+        num_tries = 0
+        while len(memories) < batch_size:
+            s = random.random() * sum_tree.total()
+            idx, score, memory = sum_tree.get(s)
+
+            if idx >= sum_tree.capacity:
+                if num_tries > 10:
+                    print('sample_memories exceeded max tries, breaking')
+                    break
+                print('warning: invalid index:', idx)
+                continue
+
+            memories.append((self.replay_memory.memory_states[idx], 
+                             self.replay_memory.memory_actions[idx],
+                             self.replay_memory.memory_rewards[idx],
+                             self.replay_memory.memory_next_states[idx],
+                             self.replay_memory.memory_continues[idx]))
+
+        return self.make_batch(memories)
+
+
+    def epsilon(self, step):
+        return max(self.eps_min, self.eps_max - (self.eps_max-self.eps_min) * step/self.eps_decay_steps)
 
 
     def epsilon_greedy(self, q_values, step):
@@ -521,62 +753,211 @@ class DeepQNetwork:
             return np.argmax(q_values) # optimal action
 
 
-    def save_memory(self):
-        dump_size = 10000
-        num_files = int(math.ceil(len(self.replay_memory) / dump_size))
+    def save_memory(self, memories, sess=None, batch_size=5):
+        if sess is None:
+            sess = tf.get_default_session()
 
-        print('saving memory. memory length:', len(self.replay_memory), num_files)
-        for i in range(num_files):
-            path = '{}-{:d}'.format(self.memory_path, i, num_files)
-            print('saving memory to:', path)
+        count = 0
 
-            with open(path, 'wb') as f:
-                if i < num_files - 1:
-                    f_dump_size = dump_size
-                else:
-                    f_dump_size = len(self.replay_memory) % dump_size
+        # calculate priority value
+        num_batches = int(math.ceil(len(memories) / batch_size))
 
-                pickle.dump(f_dump_size, f)
+        memories_with_priority = []
+        for i in range(num_batches):
+            states, actions, rewards, next_states, continues = self.make_batch(memories[i * batch_size:(i+1) * batch_size])
 
-                for j in range(f_dump_size):
-                    pickle.dump(self.replay_memory[i*dump_size + j], f)
+            target_max_q_values = self.get_target_max_q_values(sess, rewards, continues, next_states)
 
+            if self.testing_predict:
+                for j in range(len(target_max_q_values)):                    
+                    if continues[j] == 0:
+                        assert(rewards[j] == target_max_q_values[j])
 
-    def load_memory(self):
-        print('loaded replay memory length:', len(self.replay_memory))
-
-        fns = []
-        for fn in os.listdir(self.memory_dir):
-            match = re.match(self.memory_fn + '-(\\d+)(-\\d+)?', fn)
-            if not match:
-                continue
-            fns.append((fn, int(match.group(1))))
+            losses = sess.model.losses.eval(
+                         feed_dict={sess.model.X_state: states,
+                                    sess.model.X_action: actions,
+                                    sess.model.y: target_max_q_values})
 
 
-        for fn, num in sorted(fns, key=lambda x:x[1], reverse=True):
+            for row in zip(states, actions, rewards, next_states, continues, losses):
+                memories_with_priority.append(row)
+
+        # now save
+        path = os.path.join(self.save_dir, '{}-{:d}'.format(self.memory_file_prefix, int(time.time())))
+        i = 0
+        new_path = path + '-{:d}'.format(i)
+        while os.path.exists(new_path):
+            i += 1
+            new_path = path + '-{:d}'.format(i)
+        path = new_path
+            
+
+        print('saving memory to:', path, 'size:', len(memories_with_priority))
+
+        with open(path, 'wb') as f:
+            pickle.dump(len(memories_with_priority), f)
+
+            for j in range(len(memories_with_priority)):
+                pickle.dump(memories_with_priority[j], f)
+
+        print('save complete')
+        self.memory_queue.put(path)
+
+
+    def make_state(self, frames):
+        return np.concatenate(frames, axis=2)
+
+
+    def make_batch(self, memories):
+        cols = [[], [], [], [], []] # state, action, reward, next_state, continue
+
+        for memory in memories:
             try:
-                path = os.path.join(self.memory_dir, fn)
-                print('loading memory from: ', path)
-
-                with open(path, 'rb') as fin:
-                    size = pickle.load(fin)
-
-                    for i in range(size):
-                        self.replay_memory.append(pickle.load(fin))
-
-                if len(self.replay_memory) >= self.replay_max_memory_length:
-                    break
-
-            except EOFError:
-                print('eoferror')
+                for col, value in zip(cols, memory):
+                    col.append(value)
+            except TypeError as e:
+                print('TypeError: ', str(e), type(memory))
                 pass
 
+        cols = [np.array(col) for col in cols]
+        return cols[0], cols[1], cols[2], cols[3], cols[4]
 
-    def get_session(parent, load_model=True, save_model=True):
+
+    def get_target_max_q_values(self, sess, rewards, continues, next_states):
+        if self.optioens['use_double']:
+            max_next_q_values = sess.model.double_max_q_values.eval(
+                feed_dict={sess.model.X_state: next_states})
+        else:
+            next_q_values = sess.model.target_q_values.eval(
+                feed_dict={sess.model.X_state: next_states})
+            max_next_q_values = np.max(next_q_values, axis=1, keepdims=True)
+
+        return rewards + continues * self.discount_rate * max_next_q_values
+
+
+
+    def get_memory_file_list(self):
+        fns = []
+        for fn in os.listdir(self.save_dir):
+            match = re.match(self.memory_file_prefix + '-(\\d+)-(\\d+)', fn)
+            if not match:
+                continue
+            path = os.path.join(self.save_dir, fn)
+            with open(path, 'rb') as fin:
+                size = pickle.load(fin)
+
+            fns.append((path, int(match.group(1)), int(size)))
+
+        return fns
+
+
+    def clear_old_memory(self):
+        fns = self.get_memory_file_list()
+
+        max_memory_size = int(self.replay_max_memory_length * 3)
+        cur_mem_size = sum([row[2] for row in fns])
+
+        print('cur_mem_size:', cur_mem_size, 'max_memory_size:', max_memory_size)
+
+        if cur_mem_size > max_memory_size:
+            for path, date, size in sorted(fns, key=lambda x: x[1]):
+                print('deleting old memory:', path)
+                os.unlink(path)
+                cur_mem_size -= size
+
+                if cur_mem_size <= max_memory_size:
+                    break
+
+
+    def load_memory(self, memories, memory_fn):
+        try:
+            print('loading memory from:', memory_fn)
+
+            with open(memory_fn, 'rb') as fin:
+                size = pickle.load(fin)
+
+                for i in range(size):
+                    memories.append(pickle.load(fin))
+
+
+            print('load complete. loaded:', len(memories))
+        except EOFError:
+            print('eoferror')
+            pass
+        except FileNotFoundError:
+            print('file missing:', memory_fn, 'skipping')
+            raise
+
+
+    def load_saved_memory(self, memories):
+        print('loaded replay memory length:', len(memories))
+
+        fns = self.get_memory_file_list()
+
+        for path, date, size in sorted(fns, key=lambda x:x[1]):
+            self.load_memory(memories, path)
+
+
+    def add_memories(self, memories, sum_tree=None):
+        for state, action, reward, next_state, cont, loss in memories:
+            if self.options['use_priority']:
+                idx = sum_tree.add(loss+0.001, 0)
+
+                self.replay_memory.memory_states[idx] = state
+                self.replay_memory.memory_actions[idx] = action
+                self.replay_memory.memory_rewards[idx] = reward
+                self.replay_memory.memory_next_states[idx] = next_state
+                self.replay_memory.memory_continues[idx] = cont
+                self.replay_memory.increment_index()
+
+            else:
+                self.replay_memory.append(state,
+                                          action,
+                                          reward,
+                                          next_state,
+                                          cont)
+
+
+        # num_batches = int(math.ceil(len(memories) / batch_size))
+
+        # num_rows_added = 0
+        # print('num_batches: ', num_batches)
+        # for i in range(num_batches):
+        #     cols = [[], [], [], [], []] # state, action, reward, next_state, continue
+        #     rows = memories[i * batch_size:(i+1) * batch_size]
+        #     for memory in rows:
+        #         for col, value in zip(cols, memory):
+        #             col.append(value)
+
+        #     cols = [np.array(col) for col in cols]
+        #     states, actions, rewards, next_states, continues = cols
+
+        #     online_actions, target_values = sess.run([sess.model.online_actions,
+        #                                               sess.model.target_q_values],
+        #                                              feed_dict={sess.model.X_state: next_states})
+
+        #     y_val = rewards + continues * self.discount_rate * target_values[np.arange(target_values.shape[0]), online_actions].reshape(-1, 1)
+
+        #     error = sess.run([sess.model.error], 
+        #                         feed_dict={
+        #                             sess.model.X_state: states,
+        #                             sess.model.X_action: actions,
+        #                             sess.model.y: y_val
+        #                         })[0]
+
+
+        #     # print(states.shape, actions.shape, y_val.shape)
+        #     for loss, row in zip(error.reshape(-1), rows):
+        #         num_rows_added += 1
+        #         sum_tree.add(loss + 0.1, row)
+        #         # print('adding:', len(row))
+        #         # print(row[0].shape, row[1], row[2], row[3].shape)
+
+
+    def get_session(parent, load_model=True, save_model=False, env=None):
         class Session:
-            def __init__(self, model_class, save_path):
-                self.model_class = model_class
-                self.save_path = save_path
+            def __init__(self, env):
+                self.env = env
 
 
             def __enter__(self):
@@ -584,38 +965,26 @@ class DeepQNetwork:
 
 
             def __exit__(self, ty, value, tb):
-                self.close()
+                self.close(ty, value, tb)
 
 
             def run(self, *args, **kwargs):
                 return self._sess.run(*args, **kwargs)
 
 
-            def save(self, path):
-                name = parent.game_id
-                save_path = os.path.join(path, name)
-
-                # for fn in os.listdir(path):
-                #     if fn.startswith(name):
-                #         fn_path = os.path.join(path, fn)
-                #         print('deleting old file:', fn_path)
-                #         os.unlink(fn_path)
-
-                print('saving model: ', save_path)
-                self.saver.save(self._sess, save_path)
+            def save(self, save_path_prefix):
+                print('saving model: ', save_path_prefix)
+                self.saver.save(self._sess, save_path_prefix)
                 print('saved model')
 
 
-            def restore(self, path):
-                name = parent.game_id
-                save_path = os.path.join(path, name)
-
-                if not os.path.exists(save_path + '.index'):
-                    print('model does not exist:', save_path)
+            def restore(self, save_path_prefix):
+                if not os.path.exists(save_path_prefix + '.index'):
+                    print('model does not exist:', save_path_prefix)
                     return False
 
-                print('restoring model: ', save_path)
-                self.saver.restore(self._sess, save_path)
+                print('restoring model: ', save_path_prefix)
+                self.saver.restore(self._sess, save_path_prefix)
                 print('restored model')
 
                 return True
@@ -626,7 +995,8 @@ class DeepQNetwork:
 
                 tf.reset_default_graph()
 
-                parent.model = self.model_class(parent.env.action_space.n)
+                self.model = parent.model_class(self.env, options=parent.options)
+
                 self.saver = tf.train.Saver()
 
                 config = tf.ConfigProto()
@@ -638,7 +1008,7 @@ class DeepQNetwork:
 
                 loaded = False
                 if load_model:
-                    loaded = self.restore(self.save_path)
+                    loaded = self.restore(parent.save_path_prefix)
 
                 if not loaded:
                     self._sess.run(tf.global_variables_initializer())
@@ -648,38 +1018,14 @@ class DeepQNetwork:
                 return self
 
 
-            def close(self):
-                print('closing model')
+            def close(self, ty=None, value=None, tb=None):
                 if save_model:
-                    self.save(self.save_path)
+                    self.save(parent.save_path_prefix)
 
-                self._sess.__exit__(None, None, None)                    
+                self._sess.__exit__(ty, value, tb)                    
                 self._sess.close()
                 self._sess = None
 
 
-        return Session(parent.model_class, parent.save_path)
-
-
-
-    def get_params(self, deep=False):
-        return {
-            'model_class': self.model_class,
-            'num_epoch': self.num_epoch,
-            'batch_size': self.batch_size,
-            'report_ratio': self.report_ratio,
-            'verbose': self.verbose,
-            'save_path': self.save_path,
-        }
-
-
-    def set_params(self, params):
-        self.model_class = params['model_class']
-        self.num_epoch = params['num_epoch']
-        self.batch_size = params['batch_size']
-        self.report_ratio = params['report_ratio']
-        self.verbose = params['verbose']
-        self.save_path = params['save_path']
-        self._sess = None        
-
+        return Session(env)
 

@@ -3,9 +3,15 @@ import importlib
 
 parser = argparse.ArgumentParser()
 
-parser.add_argument('-n', '--network', dest='network', default='deep_q_network_multi.DeepQNetwork')
-parser.add_argument('-a', '--agent', dest='agent', default='game_agent.GameAgent')
-parser.add_argument('-g', '--game-id', dest='game_id', default='MsPacman-v0')
+parser.add_argument('-a', '--agent', dest='agent', default='cart_pole_agent.CartPoleAgent')
+parser.add_argument('-g', '--game-id', dest='game_id', default='CartPole-v1')
+parser.add_argument('-n', '--network', dest='network', default='deep_q_network.DeepQNetwork')
+parser.add_argument('-m', '--model-save-prefix', dest='model_save_prefix', default=None)
+
+parser.add_argument('--no-double', dest='use_double', action='store_false', default=True)
+parser.add_argument('--nd', '--no-dueling', dest='use_dueling', action='store_false', default=True)
+parser.add_argument('--np', '--no-priority', dest='use_priority', action='store_false', default=True)
+parser.add_argument('--dir', '--save-dir', dest='save_dir', default='./models')
 
 args = parser.parse_args()
 
@@ -14,13 +20,20 @@ net_mod, net_cl_str = args.network.split('.')
 
 ag_mod, ag_cl_str = args.agent.split('.')
 
-mod = importlib.import_module(net_mod)
-net_cl = getattr(mod, net_cl_str)
+mod_net = importlib.import_module(net_mod)
+net_cl = getattr(mod_net, net_cl_str)
 
-mod = importlib.import_module(ag_mod)
-ag_cl = getattr(mod, ag_cl_str)
+mod_ag = importlib.import_module(ag_mod)
+ag_cl = getattr(mod_ag, ag_cl_str)
 
 print('args.game_id', args.game_id)
-qn = net_cl(args.game_id, ag_cl)
+print('args.save_prefix', args.model_save_prefix)
+
+options = mod_net.DEFAULT_OPTIONS
+options.update(vars(args))
+
+qn = net_cl(args.game_id, ag_cl, 
+            model_save_prefix=args.model_save_prefix,
+            options=options)
 
 qn.train()

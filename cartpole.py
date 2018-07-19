@@ -47,6 +47,7 @@ def render_cart_pole(env, obs):
         draw.line((0, cart_y, img_w, cart_y), fill=0)
         draw.rectangle((cart_x - cart_w // 2, cart_y - cart_h // 2, cart_x + cart_w // 2, cart_y + cart_h // 2), fill=cart_col) # draw cart
         draw.line((cart_x, cart_y - cart_h // 2, top_pole_x, top_pole_y), fill=pole_col, width=pole_w) # draw pole
+        
         return np.array(img)
 
 def plot_cart_pole(env, obs):
@@ -121,7 +122,6 @@ obs = env.reset()
 
 # reset_graph()
 
-reset_graph()
 
 def discount_rewards(rewards, discount_rate):
     discounted_rewards = np.zeros(len(rewards))
@@ -131,12 +131,14 @@ def discount_rewards(rewards, discount_rate):
         discounted_rewards[step] = cumulative_rewards
     return discounted_rewards
 
+
 def discount_and_normalize_rewards(all_rewards, discount_rate):
     all_discounted_rewards = [discount_rewards(rewards, discount_rate) for rewards in all_rewards]
     flat_rewards = np.concatenate(all_discounted_rewards)
     reward_mean = flat_rewards.mean()
     reward_std = flat_rewards.std()
     return [(discounted_rewards - reward_mean)/reward_std for discounted_rewards in all_discounted_rewards]
+
 
 def render_policy_net(model_path, action, X, n_max_steps = 1000):
     frames = []
