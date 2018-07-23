@@ -229,9 +229,9 @@ class GameAgent:
 
 
 class BreakoutAgent(GameAgent):
-    input_height = 105
+    input_height = 89
     input_width = 80
-    input_channels = 3
+    input_channels = 4
     use_conv = True
     compress_ratio = 2
     game_report_interval = 10
@@ -239,7 +239,7 @@ class BreakoutAgent(GameAgent):
 
 
     def preprocess_observation(self, img):
-        img = img[::self.compress_ratio, ::self.compress_ratio] # crop and downsize
+        img = img[16:-16:self.compress_ratio, ::self.compress_ratio] # crop and downsize
         img = np.dot(img[...,:3], [0.299, 0.587, 0.144])
 
         return img.astype('uint8').reshape(self.input_height, self.input_width, 1)

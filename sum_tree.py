@@ -60,6 +60,7 @@ class SumTree:
         self.tree[idx] = p
         self._propagate(idx, change)
 
+
     def get(self, s):
         idx = self._retrieve(0, s)
         dataIdx = idx - self.capacity + 1

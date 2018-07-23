@@ -35,16 +35,17 @@ DEFAULT_OPTIONS = {
     'testing_train': False,
     'testing_weights': False,
     'model_save_prefix': None,
-    'replay_max_memory_length': 500000,
+    'replay_max_memory_length': 400000,
     'max_num_training_steps': 20000000,
     'num_game_frames_before_training': 10000,
-    'game_report_interval': 10
+    'game_report_interval': 10,
+    'sample_train_backward': False,
+    'use_episodes': True,
+    'frame_skip': 4
 }
 
 
 class DeepQNetwork:
-
-
     def __init__(self, 
                  game_id,
                  model_class, 
@@ -77,13 +78,13 @@ class DeepQNetwork:
         self.eps_decay_steps = self.options['eps_decay_steps']
         self.discount_rate = self.options['discount_rate']
         self.mem_save_size = self.options['mem_save_size']
+        self.use_episodes = self.options['use_episodes']
+        self.frame_skip = self.options['frame_skip']
 
         # train settings
         self.max_num_training_steps = self.options['max_num_training_steps']
         self.replay_max_memory_length = self.options['replay_max_memory_length']
         self.num_game_frames_before_training = self.options['num_game_frames_before_training']
-        self.memory_indices = []
-        self.memory_last_i = -1
         self.batch_size = self.options['batch_size']
 
         # interprocess communication
@@ -91,10 +92,13 @@ class DeepQNetwork:
         self.save_count = multiprocessing.Value('i', 0)
         self.game_count = multiprocessing.Value('i', 0)
 
+        # testing flags
         self.testing_predict = self.options['testing_predict']
         self.testing_train = self.options['testing_train']
         self.testing_weights = self.options['testing_weights']
+        self.sample_train_backward = self.options['sample_train_backward']
 
+        # create save dir
         if not os.path.exists(self.save_dir):
             os.mkdir(self.save_dir)
 
@@ -110,7 +114,8 @@ class DeepQNetwork:
         p_t.start()
 
         while True:
-            g_t = multiprocessing.Process(target=self.run_game_func)
+            g_t = multiprocessing.Process(target=self.run_game_func, 
+                                          kwargs={'is_training': True})
             g_t.start()
 
             while g_t.is_alive():
@@ -328,8 +333,8 @@ class DeepQNetwork:
 
                     # And save regularly
                     if step % save_steps == 0:
-                        sess.save(self.save_path_prefix)
                         sess.model.game_count.load(self.game_count.value)
+                        sess.save(self.save_path_prefix)
                         self.save_count.value += 1
 
                     # report 
@@ -371,7 +376,12 @@ class DeepQNetwork:
         print('train finished in {:0.1f} seconds / {:0.1f} mins'.format(elapsed, elapsed / 60))
 
 
-    def run_game_func(self):
+    def run_game_func(self, 
+                      is_training=False,
+                      num_games=None,
+                      use_epsilon=False,
+                      interval=60,
+                      no_display=True):
         env = gym.make(self.game_id)
 
         print('run_game_func')
@@ -382,11 +392,12 @@ class DeepQNetwork:
             report_interval = 60
             max_game_length = 50000
 
-            replay_memory = ReplayMemory(self.mem_save_size,
-                                         sess.model.input_height,
-                                         sess.model.input_width,
-                                         sess.model.input_channels,
-                                         state_type=sess.model.state_type)
+            if is_training:
+                replay_memory = ReplayMemory(self.mem_save_size,
+                                             sess.model.input_height,
+                                             sess.model.input_width,
+                                             sess.model.input_channels,
+                                             state_type=sess.model.state_type)
 
             iteration = 0
             report_start_time = time.time()
@@ -394,8 +405,9 @@ class DeepQNetwork:
             report_rate = 0
             step = sess.run([sess.model.step])[0]
             info = None
+            num_episodes = 0
 
-            if self.game_count.value <= 0:
+            if is_training and self.game_count.value <= 0:
                 self.game_count.value = sess.run([sess.model.game_count])[0]
                 print('game_count:', self.game_count.value)
 
@@ -413,76 +425,114 @@ class DeepQNetwork:
                     action = 0
                     reward = None
                     info = None
+                    game_done = False
+
                     state = None
                     next_state = None
-                    done = False
-                    losses = []
 
-                    if self.save_count.value > last_save_count:
+                    num_lives = 0
+
+                    # for not training only
+                    if not is_training:
+                        actions = []
+                        game_frames = []
+
+                    if is_training and self.save_count.value > last_save_count:
                         print('save count changed reloading process')
                         break
+
+                    if not is_training:
+                        if self.game_count.value >= num_games:
+                            break
 
                     self.game_count.value += 1
 
                     obs = env.reset()
 
-                    if hasattr(sess.model, 'skip_steps'):
-                        for skip in range(sess.model.skip_steps):
-                            obs, reward, done, info = env.step(0)
-                            sess.model.on_info(info)
-
                     obs = sess.model.preprocess_observation(obs)
                     state_frames.append(obs)
 
-                    while not done:
-                        iteration += 1
-                        game_length += 1
+                    while not game_done:
+                        episode_done = False
+                        episode_length = 0
 
-                        if game_length > max_game_length:
-                            print('game too long, breaking')
-                            break
+                        while not episode_done and not game_done:
+                            iteration += 1
+                            game_length += 1
+                            episode_length += 1
 
-                        step = sess.run([sess.model.step])[0]
+                            if game_length > max_game_length:
+                                print('game too long, breaking')
+                                break
 
-                        if len(state_frames) >= sess.model.input_channels:
-                            next_state = self.make_state(state_frames)
+                            step = sess.run([sess.model.step])[0]
 
-                            if state is not None:
-                                self.append_replay(replay_memory, state, action, reward, next_state, 1)
+                            if len(state_frames) >= sess.model.input_channels:
+                                next_state = self.make_state(state_frames)
 
-                                if len(replay_memory) % self.mem_save_size == 0:
-                                    self.clear_old_memory()
-                                    self.save_memory(replay_memory, sess=sess)
-                                    replay_memory.clear()
+                                if is_training and state is not None:
+                                    self.append_replay(replay_memory, state, action, reward, next_state, 1)
 
-                            state = next_state
+                                    if len(replay_memory) % self.mem_save_size == 0:
+                                        self.clear_old_memory()
+                                        self.save_memory(replay_memory, sess=sess)
+                                        replay_memory.clear()
 
-                            # Online DQN evaluates what to do
-                            q_values = sess.model.online_q_values.eval(feed_dict={sess.model.X_state: [next_state]})
-                            total_max_q += q_values.max()
+                                state = next_state
 
-                            last_action = action
+                                # Online DQN evaluates what to do
+                                q_values = sess.model.online_q_values.eval(feed_dict={sess.model.X_state: [next_state]})
+                                total_max_q += q_values.max()
 
-                            action = self.epsilon_greedy(q_values,
-                                                         step)
+                                last_action = action
 
-                        action = sess.model.before_action(action, obs, reward, done, info)
+                                if is_training or use_epsilon:
+                                    action = self.epsilon_greedy(q_values,
+                                                                 step)
+                                else:
+                                    action = np.argmax(q_values)
 
-                        # Online DQN plays
-                        obs, reward, done, info = env.step(action)
+                            action = sess.model.before_action(action, obs, reward, game_done, info)
 
-                        game_score += reward
+                            # run action for frame_skip steps 
+                            reward = 0
+                            for i in range(self.frame_skip):
+                                # Online DQN plays
+                                obs, step_reward, game_done, info = env.step(action)
 
-                        obs = sess.model.preprocess_observation(obs)
-                        state_frames.append(obs)
+                                if not is_training:
+                                    actions.append(action)
+                                    game_frames.append(obs)
+                                
+                                reward += step_reward
 
+                                # check for episode change
+                                if self.use_episodes and info['ale.lives'] != num_lives:
+                                    if num_lives > 0:
+                                        episode_done = True
+                                    num_lives = info['ale.lives']
 
-                    # game done, save last step
-                    next_state = self.make_state(state_frames)
+                                if game_done:
+                                    break
 
-                    self.append_replay(replay_memory, state, action, reward, next_state, 0)
+                                if episode_done:
+                                    break
 
-                    state = next_state
+                            game_score += reward
+
+                            obs = sess.model.preprocess_observation(obs)
+                            state_frames.append(obs)
+
+                        num_episodes += 1
+
+                        # game / episode done, save last step
+                        next_state = self.make_state(state_frames)
+
+                        if is_training:
+                            self.append_replay(replay_memory, state, action, reward, next_state, 0)
+
+                        state = next_state
+
 
                     if game_length > 0:
                         mean_max_q = total_max_q / game_length
@@ -504,7 +554,6 @@ class DeepQNetwork:
                     game_scores.append(game_score)
 
                     if len(game_scores) > 0:
-
                         avg_score = sum(game_scores) / len(game_scores)
                     else: 
                         avg_score = 0
@@ -515,25 +564,38 @@ class DeepQNetwork:
 
                     epsilon = self.epsilon(step)
 
-                    if self.game_count.value % sess.model.game_report_interval == 0:
-                        print('{} [game] step {} game {} len: {:d} max_q: {:0.3f}/{:0.3f} score: {:0.1f} avg: {:0.1f} mem: {:d} eps: {:0.3f} fr: {:0.1f}/{:0.1f}'.format(
+                    if is_training:
+                        mem_len = len(replay_memory)
+                    else:
+                        mem_len = 0
+
+                    if self.game_count.value % sess.model.game_report_interval == 0 or not is_training:
+                        print('{} [game] step {} game {} epi {} len: {:d} max_q: {:0.3f}/{:0.3f} score: {:0.1f} avg: {:0.1f} mem: {:d} eps: {:0.3f} fr: {:0.1f}/{:0.1f}'.format(
                                    time_string(),
                                    step,
                                    self.game_count.value, 
+                                   num_episodes,
                                    game_length, 
                                    mean_max_q,
                                    avg_max_q,
                                    game_score, 
                                    avg_score,
-                                   len(replay_memory),
+                                   mem_len,
                                    epsilon,
                                    frame_rate,
                                    report_rate))
 
+                    if not is_training and not no_display:
+                        render_game(game_frames, 
+                                    actions, 
+                                    repeat=False, 
+                                    interval=interval)
+
+
             except KeyboardInterrupt:
                 print('run game interrupted')
 
-            if len(replay_memory) > 0:
+            if is_training and len(replay_memory) > 0:
                 self.clear_old_memory()
                 self.save_memory(replay_memory, sess=sess)
                 replay_memory.clear()
@@ -544,130 +606,147 @@ class DeepQNetwork:
 
 
     def play(self, num_games=1, use_epsilon=False, interval=60, no_display=False):
-        env = gym.make(self.game_id)
-        env._max_episode_steps = 1000
-
-        with self.get_session(load_model=True, save_model=False, env=env) as sess:
-            game_scores = []
-
-            try:
-                for i in range(num_games):
-                    iteration = 0
-                    step = sess.model.step.eval()
-
-                    epoch_start_time = time.time()
-
-                    total_max_q = 0.0
-                    game_length = 0
-                    game_score = 0
-                    state_frames = deque(maxlen=sess.model.input_channels)
-                    game_frames = []
-                    actions = []
-                    action = 0
-                    state = None
-                    next_state = None
-                    done = False
-                    num_lives = 0
-                    reward = 0
-
-                    info = None
-
-                    obs = env.reset()
-
-                    if hasattr(sess.model, 'skip_steps'):
-                        for skip in range(sess.model.skip_steps):
-                            obs, reward, done, info = env.step(0)
-
-                    game_frames.append(obs)
-                    actions.append(action)
-                    obs = sess.model.preprocess_observation(obs)
-                    state_frames.append(obs)
-
-                    while not done:
-                        iteration += 1
-                        game_length += 1
-
-                        if len(state_frames) >= sess.model.input_channels:
-                            next_state = self.make_state(state_frames)
-
-                            # Online DQN evaluates what to do
-                            q_values = sess.model.online_q_values.eval(feed_dict={sess.model.X_state: [next_state]})
-                            if use_epsilon:
-                                action = self.epsilon_greedy(q_values,
-                                                             step)
-                            else:
-                                action = np.argmax(q_values)
-
-                        action = sess.model.before_action(action, obs, reward, done, info)
-
-                        # Online DQN plays
-                        obs, reward, done, info = env.step(action)
-
-                        game_score += reward
-
-                        game_frames.append(obs)
-                        actions.append(action)
-                        obs = sess.model.preprocess_observation(obs)
-                        state_frames.append(obs)
+        self.run_game_func(is_training=False,
+                           num_games=num_games,
+                           use_epsilon=use_epsilon,
+                           interval=interval,
+                           no_display=no_display)
 
 
-                    # game done, save last step
-                    next_state = self.make_state(state_frames)
-                    state = next_state
 
-                    if game_length > 0:
-                        mean_max_q = total_max_q / game_length
-                    else:
-                        mean_max_q = 0
+    # def play(self, num_games=1, use_epsilon=False, interval=60, no_display=False):
+    #     env = gym.make(self.game_id)
+    #     env._max_episode_steps = 1000
 
-                    game_scores.append(game_score)
+    #     with self.get_session(load_model=True, save_model=False, env=env) as sess:
+    #         game_scores = []
 
-                    if len(game_scores) > 0:
-                        avg_score = sum(game_scores) / len(game_scores)
-                    else: 
-                        avg_score = 0
+    #         try:
+    #             for i in range(num_games):
+    #                 iteration = 0
+    #                 step = sess.model.step.eval()
 
-                    max_score = max(game_scores)
+    #                 epoch_start_time = time.time()
 
-                    min_score = min(game_scores)
+    #                 total_max_q = 0.0
+    #                 game_length = 0
+    #                 game_score = 0
+    #                 state_frames = deque(maxlen=sess.model.input_channels)
+    #                 game_frames = []
+    #                 actions = []
+    #                 action = 0
+    #                 state = None
+    #                 next_state = None
+    #                 game_done = False
+    #                 num_lives = 0
+    #                 reward = 0
 
-                    std_dev = np.std(game_scores)
+    #                 info = None
 
-                    print('step: {:d} game {:d} len: {:d} max_q: {:0.3f} score: {:0.1f} avg: {:0.1f} max: {:0.1f} min: {:0.1f} std: {:0.2f}'.format(
-                                                                                   step,
-                                                                                   i,
-                                                                                   game_length, 
-                                                                                   mean_max_q,
-                                                                                   game_score, 
-                                                                                   avg_score,
-                                                                                   max_score,
-                                                                                   min_score, 
-                                                                                   std_dev))
-                    if not no_display:                                               
-                        render_game(game_frames, actions, repeat=False, interval=interval)
+    #                 obs = env.reset()
+
+    #                 if hasattr(sess.model, 'skip_steps'):
+    #                     for skip in range(sess.model.skip_steps):
+    #                         obs, reward, done, info = env.step(0)
+
+    #                 game_frames.append(obs)
+    #                 actions.append(action)
+    #                 obs = sess.model.preprocess_observation(obs)
+    #                 state_frames.append(obs)
+
+    #                 while not game_done:
+    #                     iteration += 1
+    #                     game_length += 1
+
+    #                     if len(state_frames) >= sess.model.input_channels:
+    #                         next_state = self.make_state(state_frames)
+
+    #                         # Online DQN evaluates what to do
+    #                         q_values = sess.model.online_q_values.eval(feed_dict={sess.model.X_state: [next_state]})
+    #                         if use_epsilon:
+    #                             action = self.epsilon_greedy(q_values,
+    #                                                          step)
+    #                         else:
+    #                             action = np.argmax(q_values)
+
+    #                     action = sess.model.before_action(action, obs, reward, game_done, info)
+
+    #                     # # Online DQN plays
+    #                     # obs, reward, done, info = env.step(action)
+
+    #                     reward = 0
+    #                     episode_done = False
+    #                     for i in range(self.frame_skip):
+    #                         # Online DQN plays
+    #                         obs, step_reward, game_done, info = env.step(action)
+                            
+    #                         reward += step_reward
+
+    #                         # check for episode change
+    #                         if self.use_episodes and info['ale.lives'] != num_lives:
+    #                             if num_lives > 0:
+    #                                 episode_done = True
+    #                             num_lives = info['ale.lives']
+
+    #                         if game_done:
+    #                             break
+
+    #                         if episode_done:
+    #                             break
+
+    #                     game_score += reward
+
+    #                     game_frames.append(obs)
+    #                     actions.append(action)
+    #                     obs = sess.model.preprocess_observation(obs)
+    #                     state_frames.append(obs)
+
+
+    #                 # game done, save last step
+    #                 next_state = self.make_state(state_frames)
+    #                 state = next_state
+
+    #                 if game_length > 0:
+    #                     mean_max_q = total_max_q / game_length
+    #                 else:
+    #                     mean_max_q = 0
+
+    #                 game_scores.append(game_score)
+
+    #                 if len(game_scores) > 0:
+    #                     avg_score = sum(game_scores) / len(game_scores)
+    #                 else: 
+    #                     avg_score = 0
+
+    #                 max_score = max(game_scores)
+
+    #                 min_score = min(game_scores)
+
+    #                 std_dev = np.std(game_scores)
+
+    #                 print('step: {:d} game {:d} len: {:d} max_q: {:0.3f} score: {:0.1f} avg: {:0.1f} max: {:0.1f} min: {:0.1f} std: {:0.2f}'.format(
+    #                                                                                step,
+    #                                                                                i,
+    #                                                                                game_length, 
+    #                                                                                mean_max_q,
+    #                                                                                game_score, 
+    #                                                                                avg_score,
+    #                                                                                max_score,
+    #                                                                                min_score, 
+    #                                                                                std_dev))
+    #                 if not no_display:                                               
+    #                     render_game(game_frames, 
+    #                                 actions, 
+    #                                 repeat=False, 
+    #                                 interval=interval)
 
 
                                 
-            except KeyboardInterrupt:
-                print('interrupted')
-                raise
+    #         except KeyboardInterrupt:
+    #             print('interrupted')
+    #             raise
 
-        env.close()
-
-
-    # def calculate_loss(self, ):
-        # next_q_values = sess.model.target_max_q_values.eval(
-        #     feed_dict={sess.model.X_state: self.convert_state(next_states)})
-        # max_next_q_values = np.max(next_q_values, axis=1, keepdims=True)
-        # y_val = rewards + continues * discount_rate * max_next_q_values
-
-        # online_actions, target_values = sess.run([sess.model.online_actions,
-        #                                           sess.model.target_max_q_values],
-        #                                          feed_dict={sess.model.X_state: next_states})
-
-        # y_val = rewards + continues * self.discount_rate \
-        #           * target_values[np.arange(target_values.shape[0]), 
-        #                                     online_actions].reshape(-1, 1)
+    #     env.close()
 
 
 
@@ -680,31 +759,6 @@ class DeepQNetwork:
 
 
     def sample_memories(self, replay_memory, batch_size, with_replacement=False):
-        # if len(self.memory_indices) < len(replay_memory):
-        #     print('resampling random memory list')
-        #     new_size = min([int(len(replay_memory) * 2), self.replay_max_memory_length])
-        #     self.memory_indices = np.random.permutation(new_size)
-        #     self.memory_last_i = -1
-
-        # memories = []
-        # while len(memories) < batch_size:
-        #     self.memory_last_i += 1
-
-        #     if self.memory_last_i >= len(self.memory_indices):
-        #         self.memory_last_i = 0
-
-        #     i = self.memory_last_i
-        #     idx = self.memory_indices[i]
-
-        #     if idx >= len(replay_memory):
-        #         continue
-
-        #     memories.append((self.replay_memory.memory_states[idx], 
-        #                      self.replay_memory.memory_actions[idx],
-        #                      self.replay_memory.memory_rewards[idx],
-        #                      self.replay_memory.memory_next_states[idx],
-        #                      self.replay_memory.memory_continues[idx]))
-
         memories = []
         if with_replacement:
             period = len(self.replay_memory) / batch_size
@@ -740,26 +794,26 @@ class DeepQNetwork:
                              self.replay_memory.memory_next_states[idx],
                              self.replay_memory.memory_continues[idx]))
 
+            if self.sample_train_backward:
+                # propagate train backward
+                extra_count = 0
+                idx -= 1
 
-            # # propagate train backward
-            # extra_count = 0
-            # idx -= 1
-
-            # if idx <= 0:
-            #     idx = len(sum_tree) - 1
-            # while self.replay_memory.memory_continues[idx] != 0 \
-            #         and len(memories) < batch_size \
-            #         and extra_count < 4:
-            #     memories.append((self.replay_memory.memory_states[idx], 
-            #                      self.replay_memory.memory_actions[idx],
-            #                      self.replay_memory.memory_rewards[idx],
-            #                      self.replay_memory.memory_next_states[idx],
-            #                      self.replay_memory.memory_continues[idx]))
-            #     extra_count += 1
-            #     idx -= 1
-    
-            #     if idx <= 0:
-            #         idx = len(sum_tree) - 1
+                if idx <= 0:
+                    idx = len(sum_tree) - 1
+                while self.replay_memory.memory_continues[idx] != 0 \
+                        and len(memories) < batch_size \
+                        and extra_count < 4:
+                    memories.append((self.replay_memory.memory_states[idx], 
+                                     self.replay_memory.memory_actions[idx],
+                                     self.replay_memory.memory_rewards[idx],
+                                     self.replay_memory.memory_next_states[idx],
+                                     self.replay_memory.memory_continues[idx]))
+                    extra_count += 1
+                    idx -= 1
+        
+                    if idx <= 0:
+                        idx = len(sum_tree) - 1
 
     
         return self.make_batch(memories)
