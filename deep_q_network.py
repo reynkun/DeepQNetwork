@@ -30,7 +30,7 @@ DEFAULT_OPTIONS = {
     'eps_decay_steps': 2000000,
     'discount_rate': 0.99,
     'mem_save_size': 10000,
-    'batch_size': 32,
+    'batch_size': 64,
     'testing_predict': False,
     'testing_train': False,
     'testing_weights': False,
@@ -39,9 +39,16 @@ DEFAULT_OPTIONS = {
     'max_num_training_steps': 20000000,
     'num_game_frames_before_training': 10000,
     'game_report_interval': 10,
+    'game_render_interval': 20000,
     'sample_train_backward': False,
+    'sample_train_backward_num_steps': 4,
     'use_episodes': True,
-    'frame_skip': 4
+    'use_double': True,
+    'use_dueling': True,
+    'use_priority': True,
+    'frame_skip': 1,
+    'skip_steps': 0,
+    'tf_log_level': 3
 }
 
 
@@ -51,21 +58,52 @@ class DeepQNetwork:
                  model_class, 
                  model_save_prefix=None,
                  options=None):
+        self.save_dir = options['save_dir']
+        if options['model_save_prefix'] is not None:
+            self.file_prefix = '{}'.format(options['model_save_prefix'])
+        else:
+            self.file_prefix = game_id
+
+        # create save dir
+        if not os.path.exists(self.save_dir):
+            os.mkdir(self.save_dir)
+
+        # load conf file if exists
+        path = os.path.join(self.save_dir, '{}.conf'.format(self.file_prefix))
+        if os.path.exists(path):
+            with open(path) as fin:
+                self.options = json.load(fin)
+                print(json.dumps(self.options, sort_keys=True, indent=4))
+                print('options loaded from:', path)
+        else:
+            self.options = DEFAULT_OPTIONS
+
+        # override saved options with parameters
+        for key, value in options.items():
+            if value is not None:
+                self.options[key] = value
+
+        # add missing keys if not there
+        for key, value in DEFAULT_OPTIONS.items():
+            if key not in self.options:
+                self.options[key] = value
+
+        # now write final options
+        with open(path, 'w+') as fo:
+            print(json.dumps(self.options, sort_keys=True, indent=4))
+            print('saving options to:', path)
+
+            json.dump(self.options, fo, sort_keys=True, indent=4)
+
+
         self.model_class = model_class
         self.game_id = game_id
-
-        if options:
-            self.options = options
-        else:
-            self.options = {}
-            self.options.update(DEFAULT_OPTIONS)
-
-        self.save_dir = self.options['save_dir']
 
         if self.options['model_save_prefix'] is None:
             self.options['model_save_prefix'] = self.game_id
 
-        self.file_prefix = '{}'.format(self.options['model_save_prefix'])
+        os.environ['TF_CPP_MIN_LOG_LEVEL'] = str(self.options['tf_log_level'])
+
         self.save_path_prefix = os.path.join(self.save_dir, self.file_prefix)
         self.memory_file_prefix = '{}.memory'.format(self.file_prefix)
 
@@ -80,12 +118,16 @@ class DeepQNetwork:
         self.mem_save_size = self.options['mem_save_size']
         self.use_episodes = self.options['use_episodes']
         self.frame_skip = self.options['frame_skip']
+        self.skip_steps = self.options['skip_steps']
 
         # train settings
         self.max_num_training_steps = self.options['max_num_training_steps']
         self.replay_max_memory_length = self.options['replay_max_memory_length']
         self.num_game_frames_before_training = self.options['num_game_frames_before_training']
         self.batch_size = self.options['batch_size']
+        self.sample_train_backward = self.options['sample_train_backward']
+        self.sample_train_backward_num_steps = self.options['sample_train_backward_num_steps']
+        self.game_render_interval = self.options['game_render_interval']
 
         # interprocess communication
         self.memory_queue = multiprocessing.Queue()
@@ -96,17 +138,7 @@ class DeepQNetwork:
         self.testing_predict = self.options['testing_predict']
         self.testing_train = self.options['testing_train']
         self.testing_weights = self.options['testing_weights']
-        self.sample_train_backward = self.options['sample_train_backward']
 
-        # create save dir
-        if not os.path.exists(self.save_dir):
-            os.mkdir(self.save_dir)
-
-        path = os.path.join(self.save_dir, '{}.conf'.format(self.file_prefix))
-        if not os.path.exists(path):
-            with open(path, 'w+') as fo:
-                print(self.options)
-                json.dump(self.options, fo, sort_keys=True, indent=4)
 
 
     def train(self):
@@ -135,6 +167,8 @@ class DeepQNetwork:
 
     def train_func(self):
         env = gym.make(self.game_id)
+        env.seed(int(time.time()))
+
         start_time = time.time()
 
         with self.get_session(load_model=True, save_model=True, env=env) as sess:
@@ -383,6 +417,7 @@ class DeepQNetwork:
                       interval=60,
                       no_display=True):
         env = gym.make(self.game_id)
+        env.seed(int(time.time()))
 
         print('run_game_func')
 
@@ -456,6 +491,9 @@ class DeepQNetwork:
                         episode_done = False
                         episode_length = 0
 
+                        # for skip in range(self.skip_steps):
+                        #     obs, reward, done, info = env.step(0)
+
                         while not episode_done and not game_done:
                             iteration += 1
                             game_length += 1
@@ -502,12 +540,12 @@ class DeepQNetwork:
 
                                 if not is_training:
                                     actions.append(action)
-                                    game_frames.append(obs)
+                                    game_frames.append(sess.model.render_obs(obs))
                                 
                                 reward += step_reward
 
                                 # check for episode change
-                                if self.use_episodes and info['ale.lives'] != num_lives:
+                                if self.use_episodes and 'ale.lives' in info and info['ale.lives'] != num_lives:
                                     if num_lives > 0:
                                         episode_done = True
                                     num_lives = info['ale.lives']
@@ -589,7 +627,17 @@ class DeepQNetwork:
                         render_game(game_frames, 
                                     actions, 
                                     repeat=False, 
-                                    interval=interval)
+                                    interval=interval,
+                                    save_path=os.path.join(self.save_dir, 'video-{}-{}.mp4'.format(step, self.game_count.value)))
+
+                    if is_training and self.game_count.value % self.game_render_interval == 0:
+                        render_game(game_frames, 
+                                    actions, 
+                                    repeat=False, 
+                                    interval=interval,
+                                    save_path=os.path.join(self.save_dir, 'video-{}-{}.mp4'.format(step, self.game_count.value)),
+                                    no_display=True)
+
 
 
             except KeyboardInterrupt:
@@ -795,15 +843,16 @@ class DeepQNetwork:
                              self.replay_memory.memory_continues[idx]))
 
             if self.sample_train_backward:
-                # propagate train backward
+                # propagate updates by training backward
                 extra_count = 0
                 idx -= 1
 
-                if idx <= 0:
+                if idx < 0:
                     idx = len(sum_tree) - 1
+
                 while self.replay_memory.memory_continues[idx] != 0 \
                         and len(memories) < batch_size \
-                        and extra_count < 4:
+                        and extra_count < self.sample_train_backward_num_steps:
                     memories.append((self.replay_memory.memory_states[idx], 
                                      self.replay_memory.memory_actions[idx],
                                      self.replay_memory.memory_rewards[idx],
@@ -812,7 +861,7 @@ class DeepQNetwork:
                     extra_count += 1
                     idx -= 1
         
-                    if idx <= 0:
+                    if idx < 0:
                         idx = len(sum_tree) - 1
 
     

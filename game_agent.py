@@ -5,6 +5,9 @@ import numpy as np
 import tensorflow as tf
 
 
+from PIL import Image, ImageDraw
+
+
 class GameAgent:
     skip_steps = 0
     input_height = 2
@@ -71,7 +74,7 @@ class GameAgent:
         print('input_channels:', self.input_channels)
         self.X_action = tf.placeholder(tf.uint8, shape=[None])
         # target Q
-        self.y = tf.placeholder(tf.float16, shape=[None, 1])
+        self.y = tf.placeholder(tf.float32, shape=[None, 1])
 
         # save how many games we've played
         self.game_count = tf.Variable(0, trainable=False, name='game_count')
@@ -82,10 +85,10 @@ class GameAgent:
                                                            self.input_width,
                                                            self.input_channels])
             # convert rgb int (0-255) to floats
-            last = tf.cast(self.X_state, tf.float16)
+            last = tf.cast(self.X_state, tf.float32)
             last = tf.divide(last, 255)
         else:
-            self.X_state = tf.placeholder(tf.float16, shape=[None, 
+            self.X_state = tf.placeholder(tf.float32, shape=[None, 
                                                              self.input_height,
                                                              self.input_width,
                                                              self.input_channels])
@@ -96,10 +99,10 @@ class GameAgent:
         self.online_q_values, self.online_actions, online_vars = self.make_q_network(last, name='q_networks/online')
         self.target_q_values, self.target_actions, target_vars = self.make_q_network(last, name='q_networks/target')
 
-        self.double_max_q_values = tf.reduce_sum(self.target_q_values * tf.one_hot(self.online_actions, self.num_outputs, dtype=tf.float16),
+        self.double_max_q_values = tf.reduce_sum(self.target_q_values * tf.one_hot(self.online_actions, self.num_outputs, dtype=tf.float32),
                                                  axis=1,
                                                  keepdims=True)
-        self.max_q_values = tf.reduce_sum(self.target_q_values * tf.one_hot(self.X_action, self.num_outputs, dtype=tf.float16),
+        self.max_q_values = tf.reduce_sum(self.target_q_values * tf.one_hot(self.X_action, self.num_outputs, dtype=tf.float32),
                                           axis=1,
                                           keepdims=True)
         copy_ops = []
@@ -200,7 +203,7 @@ class GameAgent:
         print('learning rate: {:0.3f}, momentum: {:0.3f}'.format(learning_rate, momentum))
 
         with tf.variable_scope("train"):
-            self.online_max_q_values = tf.reduce_sum(self.online_q_values * tf.one_hot(self.X_action, self.num_outputs, dtype=tf.float16),
+            self.online_max_q_values = tf.reduce_sum(self.online_q_values * tf.one_hot(self.X_action, self.num_outputs, dtype=tf.float32),
                                           axis=1, 
                                           keepdims=True)
             print(self.online_q_values.shape, self.online_max_q_values.shape)
@@ -226,6 +229,10 @@ class GameAgent:
 
     def render_obs(self, obs):
         return obs
+
+
+    def before_action(self, action):
+        return action
 
 
 class BreakoutAgent(GameAgent):
@@ -259,10 +266,10 @@ class CartPoleAgent(GameAgent):
     input_channels = 4
     use_conv = False
     game_report_interval = 100
-    state_type='float16'
+    state_type = 'float32'
 
 
-    def render_obs(obs):
+    def render_obs(self, obs):
         # rendering for the cart pole environment (in case OpenAI gym can't do it)
         img_w = 600
         img_h = 400
@@ -288,3 +295,7 @@ class CartPoleAgent(GameAgent):
         draw.line((cart_x, cart_y - cart_h // 2, top_pole_x, top_pole_y), fill=pole_col, width=pole_w) # draw pole
         
         return np.array(img)
+
+
+    def before_action(self, action, obs, reward, done, info):
+        return action

@@ -11,6 +11,7 @@ class SumTree:
         self.size = 0
         self.max_reached = False
 
+
     def _propagate(self, idx, change):
         parent = (idx - 1) // 2
 
@@ -18,6 +19,7 @@ class SumTree:
 
         if parent != 0:
             self._propagate(parent, change)
+
 
     def _retrieve(self, idx, s):
         left = 2 * idx + 1
@@ -30,6 +32,7 @@ class SumTree:
             return self._retrieve(left, s)
         else:
             return self._retrieve(right, s-self.tree[left])
+
 
     def total(self):
         return self.tree[0]
