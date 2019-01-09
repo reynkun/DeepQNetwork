@@ -47,7 +47,6 @@ DEFAULT_OPTIONS = {
     'use_dueling': True,
     'use_priority': True,
     'frame_skip': 1,
-    'skip_steps': 0,
     'tf_log_level': 3
 }
 
@@ -118,7 +117,6 @@ class DeepQNetwork:
         self.mem_save_size = self.options['mem_save_size']
         self.use_episodes = self.options['use_episodes']
         self.frame_skip = self.options['frame_skip']
-        self.skip_steps = self.options['skip_steps']
 
         # train settings
         self.max_num_training_steps = self.options['max_num_training_steps']
@@ -491,9 +489,6 @@ class DeepQNetwork:
                         episode_done = False
                         episode_length = 0
 
-                        # for skip in range(self.skip_steps):
-                        #     obs, reward, done, info = env.step(0)
-
                         while not episode_done and not game_done:
                             iteration += 1
                             game_length += 1
@@ -630,13 +625,13 @@ class DeepQNetwork:
                                     interval=interval,
                                     save_path=os.path.join(self.save_dir, 'video-{}-{}.mp4'.format(step, self.game_count.value)))
 
-                    if is_training and self.game_count.value % self.game_render_interval == 0:
-                        render_game(game_frames, 
-                                    actions, 
-                                    repeat=False, 
-                                    interval=interval,
-                                    save_path=os.path.join(self.save_dir, 'video-{}-{}.mp4'.format(step, self.game_count.value)),
-                                    no_display=True)
+                    # if is_training and self.game_count.value % self.game_render_interval == 0:
+                    #     render_game(game_frames, 
+                    #                 actions, 
+                    #                 repeat=False, 
+                    #                 interval=interval,
+                    #                 save_path=os.path.join(self.save_dir, 'video-{}-{}.mp4'.format(step, self.game_count.value)),
+                    #                 no_display=True)
 
 
 

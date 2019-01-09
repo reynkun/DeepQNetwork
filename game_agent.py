@@ -231,7 +231,7 @@ class GameAgent:
         return obs
 
 
-    def before_action(self, action):
+    def before_action(self, action, obs, reward, done, info):
         return action
 
 
@@ -299,3 +299,21 @@ class CartPoleAgent(GameAgent):
 
     def before_action(self, action, obs, reward, done, info):
         return action
+
+
+class PacmanAgent(GameAgent):
+    input_height = 89
+    input_width = 80
+    input_channels = 4
+    use_conv = True
+    compress_ratio = 2
+    game_report_interval = 10
+    num_lives = 0
+
+
+    def preprocess_observation(self, img):
+        img = img[16:-16:self.compress_ratio, ::self.compress_ratio] # crop and downsize
+        img = np.dot(img[...,:3], [0.299, 0.587, 0.144])
+
+        return img.astype('uint8').reshape(self.input_height, self.input_width, 1)
+

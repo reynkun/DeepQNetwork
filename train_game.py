@@ -13,9 +13,10 @@ parser.add_argument('--nd', '--no-dueling', dest='use_dueling', action='store_fa
 parser.add_argument('--np', '--no-priority', dest='use_priority', action='store_false')
 parser.add_argument('--dir', '--save-dir', dest='save_dir', default='./models')
 parser.add_argument('--train-backward', '--ntb', dest='train_backward', action='store_false')
+parser.add_argument('--frame-skip', '--fs', dest='frame_skip', type=int)
 
 parser.add_argument('--max-train', dest='max_num_training_steps', type=int)
-parser.add_argument('--eps-steps', dest='eps_decay_steps', type=int)
+parser.add_argument('--eps', '--eps-steps', dest='eps_decay_steps', type=int)
 
 args = parser.parse_args()
 
