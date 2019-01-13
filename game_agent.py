@@ -14,7 +14,7 @@ class GameAgent:
     input_width = 2
     input_channels = 4
     use_conv = False
-    state_type='uint8'
+    state_type = 'uint8'
 
 
     def __init__(self, env, initialize=True, options=None):
@@ -215,9 +215,12 @@ class GameAgent:
                                     trainable=False, 
                                     name='step')
 
-            optimizer = tf.train.MomentumOptimizer(learning_rate, 
-                                                   momentum, 
-                                                   use_nesterov=True)
+            if self.options['use_momentum']:
+                optimizer = tf.train.MomentumOptimizer(learning_rate,
+                                                       momentum,
+                                                       use_nesterov=True)
+            else:
+                optimizer = tf.train.AdamOptimizer(learning_rate)
 
             self.training_op = optimizer.minimize(self.loss, 
                                                   global_step=self.step)

@@ -138,7 +138,6 @@ class DeepQNetwork:
         self.testing_weights = self.options['testing_weights']
 
 
-
     def train(self):
         p_t = multiprocessing.Process(target=self.train_func)
         p_t.start()
@@ -188,29 +187,11 @@ class DeepQNetwork:
             train_report_interval = 1000
 
 
-
             try:
-                fns = self.get_memory_file_list()
-
-                for path, date, size in sorted(fns, key=lambda x:x[1], reverse=True):
-                    memories = []
-                    self.load_memory(memories, path)
-                    self.add_memories(memories, replay_sum_tree)
-                    del memories
-
-                    if self.options['use_priority']:
-                        replay_memory_size = len(replay_sum_tree)
-                    else:
-                        replay_memory_size = len(self.replay_memory)
-
-                    if replay_memory_size >= self.replay_max_memory_length:
-                        break
-
+                self.load_memories()
 
                 iteration = 0
                 report_start_time = time.time()
-                report_last_iteration = 0
-                report_rate = 0
                 step = sess.model.step.eval()
                 report_last_step = step
                 losses = []
@@ -305,68 +286,14 @@ class DeepQNetwork:
 
                     # Regularly copy the online DQN to the target DQN
                     if step % copy_steps == 0:
-                        if self.testing_weights:
-                            for scope in ['q_networks/online']:
-                                for var in tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES,
-                                                             scope=scope):
-                                    print(var.name)
-                                    parts = var.name.split('/')
-                                    target_name = '/'.join((parts[0], 'target', '/'.join(parts[2:])))
-                                    print(target_name)
-
-                                    online_weights, target_weights = sess.run([tf.get_default_graph().get_tensor_by_name(var.name),
-                                                                               tf.get_default_graph().get_tensor_by_name(target_name)])
-                                    print(np.min(online_weights), np.min(target_weights))
-                                    print(np.max(online_weights), np.max(target_weights))
-                                    print(np.average(online_weights), np.average(target_weights))
-
-                        print('{} [train] copying to target network'.format(time_string()))
                         sess.model.copy_online_to_target.run()
 
-                        # for var in tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES):
-                        #     print(var.name)
-
-                        if self.testing_weights:
-                            for scope in ['q_networks/online']:
-                                for var in tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES,
-                                                             scope=scope):
-                                    print(var.name)
-                                    parts = var.name.split('/')
-                                    target_name = '/'.join((parts[0], 'target', '/'.join(parts[2:])))
-                                    print(target_name)
-
-                                    online_weights, target_weights = sess.run([tf.get_default_graph().get_tensor_by_name(var.name),
-                                                                               tf.get_default_graph().get_tensor_by_name(target_name)])
-
-                                    print(np.min(online_weights), np.min(target_weights))
-                                    print(np.max(online_weights), np.max(target_weights))
-                                    print(np.average(online_weights), np.average(target_weights))
-
-                                    # assert np.min(online_weights) == np.min(target_weights)
-                                    # assert np.max(online_weights) == np.max(target_weights)
-                                    # assert np.average(online_weights) == np.average(target_weights)
-
-                                    # print('key:', var.name)
-                                    # parts = var.name.split('/')
-                                    # num_parts = len(parts)
-                                    # found = False
-                                    # for i in range(num_parts):
-                                    #     try:
-                                    #         name = '/'.join(var.name.split('/')[i:])
-                                    #         print('  trying', name)
-                                    #         weights = tf.get_default_graph().get_tensor_by_name(name)
-                                    #         print('  found', name, weights)
-                                    #         found = True
-                                    #         break
-                                    #     except (KeyError, ValueError):
-                                    #         pass
-                                    # if not found:
-                                    #     print('did not find key')
 
                     # And save regularly
                     if step % save_steps == 0:
                         sess.model.game_count.load(self.game_count.value)
                         sess.save(self.save_path_prefix)
+
                         self.save_count.value += 1
 
                     # report 
@@ -386,8 +313,6 @@ class DeepQNetwork:
                             avg_loss = 0
 
                         losses = []
-
-                        epsilon = self.epsilon(step)
 
                         print('{} [train] step {} avg loss: {:0.3f} mem: {:d} fr: {:0.1f}'.format(
                             time_string(),
@@ -656,143 +581,6 @@ class DeepQNetwork:
                            no_display=no_display)
 
 
-
-    # def play(self, num_games=1, use_epsilon=False, interval=60, no_display=False):
-    #     env = gym.make(self.game_id)
-    #     env._max_episode_steps = 1000
-
-    #     with self.get_session(load_model=True, save_model=False, env=env) as sess:
-    #         game_scores = []
-
-    #         try:
-    #             for i in range(num_games):
-    #                 iteration = 0
-    #                 step = sess.model.step.eval()
-
-    #                 epoch_start_time = time.time()
-
-    #                 total_max_q = 0.0
-    #                 game_length = 0
-    #                 game_score = 0
-    #                 state_frames = deque(maxlen=sess.model.input_channels)
-    #                 game_frames = []
-    #                 actions = []
-    #                 action = 0
-    #                 state = None
-    #                 next_state = None
-    #                 game_done = False
-    #                 num_lives = 0
-    #                 reward = 0
-
-    #                 info = None
-
-    #                 obs = env.reset()
-
-    #                 if hasattr(sess.model, 'skip_steps'):
-    #                     for skip in range(sess.model.skip_steps):
-    #                         obs, reward, done, info = env.step(0)
-
-    #                 game_frames.append(obs)
-    #                 actions.append(action)
-    #                 obs = sess.model.preprocess_observation(obs)
-    #                 state_frames.append(obs)
-
-    #                 while not game_done:
-    #                     iteration += 1
-    #                     game_length += 1
-
-    #                     if len(state_frames) >= sess.model.input_channels:
-    #                         next_state = self.make_state(state_frames)
-
-    #                         # Online DQN evaluates what to do
-    #                         q_values = sess.model.online_q_values.eval(feed_dict={sess.model.X_state: [next_state]})
-    #                         if use_epsilon:
-    #                             action = self.epsilon_greedy(q_values,
-    #                                                          step)
-    #                         else:
-    #                             action = np.argmax(q_values)
-
-    #                     action = sess.model.before_action(action, obs, reward, game_done, info)
-
-    #                     # # Online DQN plays
-    #                     # obs, reward, done, info = env.step(action)
-
-    #                     reward = 0
-    #                     episode_done = False
-    #                     for i in range(self.frame_skip):
-    #                         # Online DQN plays
-    #                         obs, step_reward, game_done, info = env.step(action)
-                            
-    #                         reward += step_reward
-
-    #                         # check for episode change
-    #                         if self.use_episodes and info['ale.lives'] != num_lives:
-    #                             if num_lives > 0:
-    #                                 episode_done = True
-    #                             num_lives = info['ale.lives']
-
-    #                         if game_done:
-    #                             break
-
-    #                         if episode_done:
-    #                             break
-
-    #                     game_score += reward
-
-    #                     game_frames.append(obs)
-    #                     actions.append(action)
-    #                     obs = sess.model.preprocess_observation(obs)
-    #                     state_frames.append(obs)
-
-
-    #                 # game done, save last step
-    #                 next_state = self.make_state(state_frames)
-    #                 state = next_state
-
-    #                 if game_length > 0:
-    #                     mean_max_q = total_max_q / game_length
-    #                 else:
-    #                     mean_max_q = 0
-
-    #                 game_scores.append(game_score)
-
-    #                 if len(game_scores) > 0:
-    #                     avg_score = sum(game_scores) / len(game_scores)
-    #                 else: 
-    #                     avg_score = 0
-
-    #                 max_score = max(game_scores)
-
-    #                 min_score = min(game_scores)
-
-    #                 std_dev = np.std(game_scores)
-
-    #                 print('step: {:d} game {:d} len: {:d} max_q: {:0.3f} score: {:0.1f} avg: {:0.1f} max: {:0.1f} min: {:0.1f} std: {:0.2f}'.format(
-    #                                                                                step,
-    #                                                                                i,
-    #                                                                                game_length, 
-    #                                                                                mean_max_q,
-    #                                                                                game_score, 
-    #                                                                                avg_score,
-    #                                                                                max_score,
-    #                                                                                min_score, 
-    #                                                                                std_dev))
-    #                 if not no_display:                                               
-    #                     render_game(game_frames, 
-    #                                 actions, 
-    #                                 repeat=False, 
-    #                                 interval=interval)
-
-
-                                
-    #         except KeyboardInterrupt:
-    #             print('interrupted')
-    #             raise
-
-    #     env.close()
-
-
-
     def append_replay(self, replay_memory, state, action, reward, next_state, cont):
         replay_memory.append(state, action, np.array([reward]), next_state, np.array([cont]))
 
@@ -989,6 +777,23 @@ class DeepQNetwork:
 
                 if cur_mem_size <= max_memory_size:
                     break
+
+    def load_memories(self, memories):
+        fns = self.get_memory_file_list()
+
+        for path, date, size in sorted(fns, key=lambda x: x[1], reverse=True):
+            memories = []
+            self.load_memory(memories, path)
+            self.add_memories(memories, replay_sum_tree)
+            del memories
+
+            if self.options['use_priority']:
+                replay_memory_size = len(replay_sum_tree)
+            else:
+                replay_memory_size = len(self.replay_memory)
+
+            if replay_memory_size >= self.replay_max_memory_length:
+                break
 
 
     def load_memory(self, memories, memory_fn):
