@@ -71,10 +71,11 @@ class GameAgent:
 
     def make_model(self):
         # set placeholders
-        print('input_channels:', self.input_channels)
+        # print('input_channels:', self.input_channels)
         self.X_action = tf.placeholder(tf.uint8, shape=[None])
         # target Q
-        self.y = tf.placeholder(tf.float32, shape=[None, 1])
+        # self.y = tf.placeholder(tf.float32, shape=[None, 1])
+        self.y = tf.placeholder(tf.float32, shape=[None])
 
         # save how many games we've played
         self.game_count = tf.Variable(0, trainable=False, name='game_count')
@@ -99,12 +100,22 @@ class GameAgent:
         self.online_q_values, self.online_actions, online_vars = self.make_q_network(last, name='q_networks/online')
         self.target_q_values, self.target_actions, target_vars = self.make_q_network(last, name='q_networks/target')
 
-        self.double_max_q_values = tf.reduce_sum(self.target_q_values * tf.one_hot(self.online_actions, self.num_outputs, dtype=tf.float32),
-                                                 axis=1,
-                                                 keepdims=True)
-        self.max_q_values = tf.reduce_sum(self.target_q_values * tf.one_hot(self.X_action, self.num_outputs, dtype=tf.float32),
-                                          axis=1,
-                                          keepdims=True)
+        # self.double_max_q_values = tf.reduce_sum(self.target_q_values * tf.one_hot(self.online_actions, self.num_outputs, dtype=tf.float32),
+        #                                          axis=1,
+        #                                          keepdims=True)
+        # self.max_q_values = tf.reduce_sum(self.target_q_values * tf.one_hot(self.X_action, self.num_outputs, dtype=tf.float32),
+        #                                   axis=1,
+        #                                   keepdims=True)
+
+        self.double_max_q_values = tf.reduce_sum(self.target_q_values * tf.one_hot(self.online_actions,
+                                                                                   self.num_outputs,
+                                                                                   dtype=tf.float32),
+                                                 axis=1)
+        self.max_q_values = tf.reduce_sum(self.target_q_values * tf.one_hot(self.X_action,
+                                                                            self.num_outputs,
+                                                                            dtype=tf.float32),
+                                          axis=1)
+
         copy_ops = []
         for var_name, target_var in target_vars.items():
             copy_ops.append(target_var.assign(online_vars[var_name]))
@@ -200,15 +211,20 @@ class GameAgent:
         learning_rate = 0.00025
         momentum = 0.95
 
-        print('learning rate: {:0.3f}, momentum: {:0.3f}'.format(learning_rate, momentum))
+        # print('learning rate: {:0.3f}, momentum: {:0.3f}'.format(learning_rate, momentum))
 
         with tf.variable_scope("train"):
             self.online_max_q_values = tf.reduce_sum(self.online_q_values * tf.one_hot(self.X_action, self.num_outputs, dtype=tf.float32),
-                                          axis=1, 
+                                          axis=1,
                                           keepdims=True)
-            print(self.online_q_values.shape, self.online_max_q_values.shape)
+            # print(self.y.shape, self.online_q_values.shape, self.online_max_q_values.shape)
 
-            self.losses = tf.losses.huber_loss(self.y, self.online_max_q_values, reduction=tf.losses.Reduction.NONE)
+            # self.losses = tf.losses.huber_loss(self.y,
+            #                                    self.online_max_q_values,
+            #                                    reduction=tf.losses.Reduction.NONE)
+            self.losses = tf.losses.huber_loss(tf.reshape(self.y, [-1, 1]),
+                                               self.online_max_q_values,
+                                               reduction=tf.losses.Reduction.NONE)
             self.loss = tf.reduce_mean(self.losses)
 
             self.step = tf.Variable(0, 

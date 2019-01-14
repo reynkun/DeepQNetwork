@@ -1,6 +1,9 @@
 import numpy as np
-import itertools
 import h5py
+import os
+
+
+from .game_memory import GameMemory
 
 
 class ReplayMemory:
@@ -13,8 +16,9 @@ class ReplayMemory:
                  input_width,
                  input_channels,
                  state_type='uint8',
-                 max_size=MAX_SIZE):
-        if not os.exists(fn):
+                 max_size=MAX_SIZE,
+                 cache_size=300000):
+        if not os.path.exists(fn):
             init = True
         else:
             init = False
@@ -30,6 +34,12 @@ class ReplayMemory:
         self._end = self.data_file.attrs['end']
         self._max_size_plus_one = self.data_file.attrs['max_size_plus_one']
 
+        self.init_cache(input_height,
+                        input_width,
+                        input_channels,
+                        cache_size,
+                        state_type)
+
 
     def create_dataset(self, input_height, input_width, input_channels, max_size):
         self.data_file.attrs['start'] = 0
@@ -39,22 +49,32 @@ class ReplayMemory:
 
         self._max_size_plus_one = max_size + 1
 
-
-        self.data_file.create_dataset('states',
+        self.data_file.create_dataset('state',
                                       shape=(self.max_size_plus_one, input_height, input_width, input_channels),
                                       dtype=self.state_type)
-        self.data_file.create_dataset('actions',
-                                      shape=(self.max_size_plus_one),
+        self.data_file.create_dataset('action',
+                                      shape=(self.max_size_plus_one,),
                                       dtype='uint8')
-        self.data_file.create_dataset('rewards',
-                                      shape=(self.max_size_plus_one, 1),
+        self.data_file.create_dataset('reward',
+                                      shape=(self.max_size_plus_one,),
                                       dtype='uint8')
-        self.data_file.create_dataset('next_states',
+        self.data_file.create_dataset('next_state',
                                       shape=(self.max_size_plus_one, input_height, input_width, input_channels),
                                       dtype=self.state_type)
-        self.data_file.create_dataset('continues',
-                                      shape=(self.max_size_plus_one),
+        self.data_file.create_dataset('continue',
+                                      shape=(self.max_size_plus_one,),
                                       dtype='bool')
+
+
+    def init_cache(self, input_height, input_width, input_channels, cache_size, state_type='uint8'):
+        self.cache = GameMemory(input_height,
+                                input_width,
+                                input_channels,
+                                max_size=cache_size,
+                                state_type=state_type)
+
+        self.cache_map = {}
+        self.cache_map_rev = {}
 
 
     def clear(self):
@@ -65,10 +85,12 @@ class ReplayMemory:
     def append(self, state, action, reward, next_state, cont):
         # add memory to last position
         self.data_file['state'][self.end] = state
-        self.data_file['actions'][self.end] = action
-        self.data_file['rewards'][self.end] = reward
-        self.data_file['next_states'][self.end] = next_state
-        self.data_file['continues'][self.end] = cont
+        self.data_file['action'][self.end] = action
+        self.data_file['reward'][self.end] = reward
+        self.data_file['next_state'][self.end] = next_state
+        self.data_file['continue'][self.end] = cont
+
+        last_index = self.end
 
         # move end pointer
         self.end = (self.end + 1) % self.max_size_plus_one
@@ -78,16 +100,40 @@ class ReplayMemory:
         if self.end == self.start:
             self.start = (self.start + 1) % self.max_size_plus_one
 
+        return last_index
+
+
+    def close(self):
+        self.data_file.close()
+
 
     def __getitem__(self, idx):
+        cache_idx = self.cache_map.get(idx, None)
+
+        if cache_idx is not None:
+            return self.cache[cache_idx]
+
         if isinstance(idx, int):
             new_idx = (self.start + idx) % self.max_size_plus_one
 
-            return (self.memory_states[new_idx],
-                    self.memory_actions[new_idx],
-                    self.memory_rewards[new_idx],
-                    self.memory_next_states[new_idx],
-                    self.memory_continues[new_idx])
+            row = (self.data_file['state'][new_idx],
+                   self.data_file['action'][new_idx],
+                   self.data_file['reward'][new_idx],
+                   self.data_file['next_state'][new_idx],
+                   self.data_file['continue'][new_idx])
+
+            last_idx = self.cache.append(*row)
+
+            self.cache_map[idx] = last_idx
+
+            old_idx = self.cache_map_rev.get(last_idx, None)
+
+            if old_idx is not None:
+                del self.cache_map[old_idx]
+
+            self.cache_map_rev[last_idx] = idx
+
+            return row
         else:
             if idx.start is None:
                 start = 0
@@ -121,7 +167,7 @@ class ReplayMemory:
 
     @property
     def max_size_plus_one(self):
-        return self._max_size_plus_one_plus_one
+        return self._max_size_plus_one
 
 
     @property
@@ -135,15 +181,15 @@ class ReplayMemory:
         self.data_file.attrs['start'] = self._start
 
 
+    @property
+    def end(self):
+        return self._end
+
+
     @end.setter
     def end(self, s):
         self._end = s
         self.data_file.attrs['end'] = self._end
-
-
-    @property
-    def end(self):
-        return self._end
 
 
 
@@ -152,7 +198,7 @@ if __name__ == '__main__':
     # rp = ReplayMemory(10, 1, 1, 1)
 
     # for i in range(5):
-    #     rp.memory_actions[i] = i
+    #     rp.actions[i] = i
     #     print(len)
 
     # for i in range(10):
@@ -178,15 +224,38 @@ if __name__ == '__main__':
     #     
     #     
     #     
+
+    # def __init__(self,
+    #              fn,
+    #              input_height,
+    #              input_width,
+    #              input_channels,
+    #              state_type='uint8',
+    #              max_size=MAX_SIZE):
+
+    # def append(self, state, action, reward, next_state, cont):
+
+
+    # add memory to last position
+
     import random
-    rp = ReplayMemory(100, 1, 1, 1)
+    rp = ReplayMemory('test.hdf5', 1, 1, 1, max_size=10)
+
+    print(rp.start, rp.end, rp.max_size_plus_one, len(rp))
+
     for i in range(100):
-        rp.append(np.zeros((1, 1, 1)), i, i, i, np.zeros((1, 1, 1)))
-    batch_size = 10
+        rp.append(np.array([[[i]]]), i, i, np.array([[[i]]]), i%2)
 
-    period = len(rp) / batch_size
-    idx = random.randint(0, int(period)-1)
-    print(period, idx)
+    for i in range(10):
+        row = rp[i]
 
-    for i in range(batch_size):
-        print(int(period * i + idx))
+        print(row)
+
+    # batch_size = 10
+    #
+    # period = len(rp) / batch_size
+    # idx = random.randint(0, int(period)-1)
+    # print(period, idx)
+    #
+    # for i in range(batch_size):
+    #     print(int(period * i + idx))

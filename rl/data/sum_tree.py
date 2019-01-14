@@ -7,7 +7,7 @@ class SumTree:
     def __init__(self, capacity, dtype='bool'):
         self.capacity = capacity
         self.tree = np.zeros( 2*capacity - 1, dtype=np.float16)
-        self.data = np.zeros( capacity, dtype='bool')
+        self.data = np.zeros( capacity, dtype=dtype)
         self.size = 0
         self.max_reached = False
 
@@ -68,7 +68,7 @@ class SumTree:
         idx = self._retrieve(0, s)
         dataIdx = idx - self.capacity + 1
 
-        return (dataIdx, self.tree[idx], self.data[dataIdx])
+        return (idx, dataIdx, self.tree[idx], self.data[dataIdx])
 
     def __len__(self):
         return self.size
@@ -77,20 +77,30 @@ class SumTree:
 if __name__ == '__main__':
     import random
 
-    st = SumTree(100)
-    st.add(0.01, 'A')
-    st.add(0.09, 'B')
+    st = SumTree(100, dtype='uint8')
+    st.add(0.01, 5)
+    st.add(0.09, 6)
 
     print(st.total())
 
+    idx, d_idx, score, val = st.get(0.05)
 
+    print(idx, d_idx, score, val)
+    st.update(idx, 0.10)
 
-    # for i in range(100):
-    #     sc = random.random() * st.total()
-    #     index, node, value = st.get(sc)
-    #     print(st.total(), sc, value)
+    idx, d_idx, score, val = st.get(0.05)
 
-    sc = 1000
-    index, node, value = st.get(sc)
-    print(st.total(), sc, value)
+    print(st.total())
+    print(idx, d_idx, score, val)
+
+    idx, d_idx, score, val = st.get(0.005)
+
+    print(idx, d_idx, score, val)
+    st.update(idx, 0.50)
+
+    idx, d_idx, score, val = st.get(0.005)
+
+    print(st.total())
+    print(idx, d_idx, score, val)
+
 
