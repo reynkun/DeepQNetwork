@@ -46,8 +46,6 @@ DEFAULT_OPTIONS = {
     'game_report_interval': 10,
     'train_report_interval': 100,
     'game_render_interval': 20000,
-    'sample_train_backward': False,
-    'sample_train_backward_num_steps': 4,
     'use_episodes': True,
     'use_double': True,
     'use_dueling': True,
@@ -130,8 +128,6 @@ class DeepQNetwork:
         self.replay_max_memory_length = self.options['replay_max_memory_length']
         self.num_game_frames_before_training = self.options['num_game_frames_before_training']
         self.batch_size = self.options['batch_size']
-        self.sample_train_backward = self.options['sample_train_backward']
-        self.sample_train_backward_num_steps = self.options['sample_train_backward_num_steps']
         self.game_render_interval = self.options['game_render_interval']
 
         # interprocess communication
@@ -204,7 +200,7 @@ class DeepQNetwork:
                 self.replay_sum_tree = SumTree(self.replay_max_memory_length)
             else:
                 replay_memory_size = len(self.replay_memory)
-                replay_sum_tree = None
+
 
             while replay_memory_size < self.num_game_frames_before_training:
                 self.log('waiting for memory',
@@ -728,13 +724,6 @@ class DeepQNetwork:
             os.unlink(path)
 
 
-    def load_memories(self):
-        fns = self.get_memory_file_list()
-
-        for path, date, size in sorted(fns, key=lambda x: x[1], reverse=True):
-            self.load_memory(path)
-
-
     def load_memory(self, memory_fn, delete=True):
         try:
             self.log('loading memory from:', memory_fn)
@@ -758,14 +747,15 @@ class DeepQNetwork:
 
 
     def add_memory(self, state, action, reward, next_state, cont, loss=None):
-        last_index = self.replay_memory.append(state,
-                                               action,
-                                               reward,
-                                               next_state,
-                                               cont)
+        self.replay_memory.append(state,
+                                  action,
+                                  reward,
+                                  next_state,
+                                  cont,
+                                  loss)
 
         if self.options['use_priority']:
-            self.replay_sum_tree.add(loss, last_index)
+            self.replay_sum_tree.add(loss, self.replay_memory.last_index_abs)
 
 
     def get_session(parent, load_model=True, save_model=False, env=None):

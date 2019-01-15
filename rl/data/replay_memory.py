@@ -1,13 +1,15 @@
 import numpy as np
 import h5py
 import os
+import pickle
 
 
-from .game_memory import GameMemory
+from .replay_cache import ReplayCache
 
 
 class ReplayMemory:
     MAX_SIZE = 2000000
+    CACHE_SIZE = 350000
 
 
     def __init__(self,
@@ -17,7 +19,7 @@ class ReplayMemory:
                  input_channels,
                  state_type='uint8',
                  max_size=MAX_SIZE,
-                 cache_size=300000):
+                 cache_size=CACHE_SIZE):
         if not os.path.exists(fn):
             init = True
         else:
@@ -32,13 +34,18 @@ class ReplayMemory:
 
         self._start = self.data_file.attrs['start']
         self._end = self.data_file.attrs['end']
-        self._max_size_plus_one = self.data_file.attrs['max_size_plus_one']
+        self.max_size_plus_one = self.data_file.attrs['max_size_plus_one']
+        self.last_idx_abs = None
 
-        self.init_cache(input_height,
-                        input_width,
-                        input_channels,
-                        cache_size,
-                        state_type)
+        # init cache
+        self.cache = ReplayCache(input_height,
+                                 input_width,
+                                 input_channels,
+                                 max_size=cache_size,
+                                 state_type=state_type)
+
+        self.cache_map = {}
+        self.cache_map_rev = {}
 
 
     def create_dataset(self, input_height, input_width, input_channels, max_size):
@@ -46,8 +53,7 @@ class ReplayMemory:
         self.data_file.attrs['end'] = 0
         self.data_file.attrs['max_size_plus_one'] = max_size + 1
 
-
-        self._max_size_plus_one = max_size + 1
+        self.max_size_plus_one = max_size + 1
 
         self.data_file.create_dataset('state',
                                       shape=(self.max_size_plus_one, input_height, input_width, input_channels),
@@ -64,33 +70,57 @@ class ReplayMemory:
         self.data_file.create_dataset('continue',
                                       shape=(self.max_size_plus_one,),
                                       dtype='bool')
-
-
-    def init_cache(self, input_height, input_width, input_channels, cache_size, state_type='uint8'):
-        self.cache = GameMemory(input_height,
-                                input_width,
-                                input_channels,
-                                max_size=cache_size,
-                                state_type=state_type)
-
-        self.cache_map = {}
-        self.cache_map_rev = {}
-
+        self.data_file.create_dataset('loss',
+                                      shape=(self.max_size_plus_one,),
+                                      dtype='float16')
 
     def clear(self):
         self.start = 0
         self.end = 0
 
 
-    def append(self, state, action, reward, next_state, cont):
+    def load_memory(self, memory_fn, delete=True):
+        with open(memory_fn, 'rb') as fin:
+            size = pickle.load(fin)
+
+            for i in range(size):
+                self.append(*pickle.load(fin))
+
+        if delete:
+            os.unlink(memory_fn)
+
+
+    def sample_memories(self, batch_size, with_replacement=False):
+        memories = []
+        if with_replacement:
+            period = len(self) / batch_size
+            idx = random.randint(0, int(period) - 1)
+
+            for i in range(batch_size):
+                memories.append(self.replay_memory[period * i + idx])
+        else:
+            for i in range(batch_size):
+                idx = random.randint(0, len(self.replay_memory) - 1)
+                memories.append(self.replay_memory[idx])
+
+        return self.make_batch(memories)
+
+
+    def append(self, state, action, reward, next_state, cont, loss):
         # add memory to last position
         self.data_file['state'][self.end] = state
         self.data_file['action'][self.end] = action
         self.data_file['reward'][self.end] = reward
         self.data_file['next_state'][self.end] = next_state
         self.data_file['continue'][self.end] = cont
+        self.data_file['loss'][self.end] = loss
 
-        last_index = self.end
+        cache_idx = self.cache_map.get(self.end, None)
+        if cache_idx is not None:
+            del self.cache_map[self.end]
+            del self.cache_map_rev[cache_idx]
+
+        self.last_idx_abs = self.end
 
         # move end pointer
         self.end = (self.end + 1) % self.max_size_plus_one
@@ -100,7 +130,36 @@ class ReplayMemory:
         if self.end == self.start:
             self.start = (self.start + 1) % self.max_size_plus_one
 
-        return last_index
+
+    def get_abs(self, idx_abs):
+        cache_idx = self.cache_map.get(idx_abs, None)
+
+        if cache_idx is not None:
+            # print('  found cache for idx_abs', idx_abs, '->', cache_idx)
+            return self.cache.get_abs(cache_idx)
+        # print('  no cache for idx_abs', idx_abs, '->', cache_idx)
+
+        row = (self.data_file['state'][idx_abs],
+               self.data_file['action'][idx_abs],
+               self.data_file['reward'][idx_abs],
+               self.data_file['next_state'][idx_abs],
+               self.data_file['continue'][idx_abs],
+               self.data_file['loss'][idx_abs])
+
+        self.cache.append(*row)
+        self.cache_map[idx_abs] = self.cache.last_idx_abs
+
+        # print('  setting cache idx for', idx_abs, '->', self.cache.last_idx_abs)
+
+        old_idx = self.cache_map_rev.get(self.cache.last_idx_abs, None)
+
+        # print('  old index', self.cache.last_idx_abs, '->', old_idx)
+        if old_idx is not None:
+            del self.cache_map[old_idx]
+
+        self.cache_map_rev[self.cache.last_idx_abs] = idx_abs
+
+        return row
 
 
     def close(self):
@@ -108,49 +167,60 @@ class ReplayMemory:
 
 
     def __getitem__(self, idx):
-        cache_idx = self.cache_map.get(idx, None)
+        idx_abs = (self.start + idx) % self.max_size_plus_one
+        # print('  getting idx', idx, '->', idx_abs)
 
-        if cache_idx is not None:
-            return self.cache[cache_idx]
+        return self.get_abs(idx_abs)
 
-        if isinstance(idx, int):
-            new_idx = (self.start + idx) % self.max_size_plus_one
-
-            row = (self.data_file['state'][new_idx],
-                   self.data_file['action'][new_idx],
-                   self.data_file['reward'][new_idx],
-                   self.data_file['next_state'][new_idx],
-                   self.data_file['continue'][new_idx])
-
-            last_idx = self.cache.append(*row)
-
-            self.cache_map[idx] = last_idx
-
-            old_idx = self.cache_map_rev.get(last_idx, None)
-
-            if old_idx is not None:
-                del self.cache_map[old_idx]
-
-            self.cache_map_rev[last_idx] = idx
-
-            return row
-        else:
-            if idx.start is None:
-                start = 0
-            else:
-                start = idx.start
-
-            if idx.stop is None:
-                stop = self.max_size_plus_one - 1
-            else:
-                stop = idx.stop
-
-            if idx.step is None:
-                step = 1
-            else:
-                step = idx.step
-
-            return [self[i] for i in range(start, stop, step)]
+        #
+        # try:
+        #     new_idx = (self.start + idx) % self.max_size_plus_one
+        #
+        #     print('  getting', idx, ' new: ', new_idx)
+        #
+        #     cache_idx = self.cache_map.get(new_idx, None)
+        #
+        #     if cache_idx is not None:
+        #         print('  using cache for idx:', idx, 'from cache index: ', cache_idx)
+        #         return self.cache.get_abs(cache_idx)
+        #
+        #     row = (self.data_file['state'][new_idx],
+        #            self.data_file['action'][new_idx],
+        #            self.data_file['reward'][new_idx],
+        #            self.data_file['next_state'][new_idx],
+        #            self.data_file['continue'][new_idx])
+        #
+        #     self.cache.append(*row)
+        #     print('  mapping idx:', idx, 'to cache', self.cache.last_idx_abs)
+        #     self.cache_map[idx] = self.cache.last_idx_abs
+        #
+        #     old_idx = self.cache_map_rev.get(self.cache.last_idx_abs, None)
+        #
+        #     if old_idx is not None:
+        #         del self.cache_map[old_idx]
+        #
+        #     self.cache_map_rev[self.cache.last_idx_abs] = idx
+        #
+        #     return row
+        #
+        #
+        # except ValueError:
+        #     if idx.start is None:
+        #         start = 0
+        #     else:
+        #         start = idx.start
+        #
+        #     if idx.stop is None:
+        #         stop = self.max_size_plus_one - 1
+        #     else:
+        #         stop = idx.stop
+        #
+        #     if idx.step is None:
+        #         step = 1
+        #     else:
+        #         step = idx.step
+        #
+        #     return [self[i] for i in range(start, stop, step)]
 
 
     def __len__(self):
@@ -166,8 +236,13 @@ class ReplayMemory:
 
 
     @property
-    def max_size_plus_one(self):
-        return self._max_size_plus_one
+    def last_index(self):
+        idx = self.end - 1
+
+        if idx < 0:
+            idx = self.max_size_plus_one - 1
+
+        return idx
 
 
     @property

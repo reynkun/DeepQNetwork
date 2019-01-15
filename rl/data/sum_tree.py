@@ -4,7 +4,7 @@ import numpy as np
 class SumTree:
     write = 0
 
-    def __init__(self, capacity, dtype='bool'):
+    def __init__(self, capacity, dtype='uint8'):
         self.capacity = capacity
         self.tree = np.zeros( 2*capacity - 1, dtype=np.float16)
         self.data = np.zeros( capacity, dtype=dtype)
@@ -44,7 +44,7 @@ class SumTree:
         last_idx = self.write
 
         self.data[self.write] = data
-        self.update(idx, p)
+        self.update_score(idx, p)
 
         if not self.max_reached:
             self.size += 1
@@ -57,18 +57,26 @@ class SumTree:
         return last_idx
 
 
-    def update(self, idx, p):
-        change = p - self.tree[idx]
+    def update_score(self, tree_idx, p):
+        change = p - self.tree[tree_idx]
 
-        self.tree[idx] = p
-        self._propagate(idx, change)
+        self.tree[tree_idx] = p
+        self._propagate(tree_idx, change)
 
 
     def get(self, s):
         idx = self._retrieve(0, s)
         dataIdx = idx - self.capacity + 1
 
+        return self.data[dataIdx]
+
+
+    def get_with_info(self, s):
+        idx = self._retrieve(0, s)
+        dataIdx = idx - self.capacity + 1
+
         return (idx, dataIdx, self.tree[idx], self.data[dataIdx])
+
 
     def __len__(self):
         return self.size

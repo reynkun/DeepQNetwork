@@ -1,7 +1,7 @@
 import numpy as np
 
 
-class GameMemory:
+class ReplayCache:
     def __init__(self, input_height, input_width, input_channels, max_size=10000, state_type='uint8'):
         self.size_plus_one = max_size + 1
 
@@ -21,9 +21,12 @@ class GameMemory:
                                       dtype=state_type)
         self.continues = np.ndarray((self.size_plus_one,),
                                     dtype='bool')
+        self.losses = np.ndarray((self.size_plus_one,),
+                                    dtype='float16')
 
         self.start = 0
         self.end = 0
+        self.last_idx_abs = None
 
 
     def clear(self):
@@ -31,14 +34,9 @@ class GameMemory:
         self.end = 0
 
 
-    def append(self, state, action, reward, next_state, cont):
-        self.states[self.end] = state
-        self.actions[self.end] = action
-        self.rewards[self.end] = reward
-        self.next_states[self.end] = next_state
-        self.continues[self.end] = cont
-
-        last_idx = self.end
+    def append(self, state, action, reward, next_state, cont, loss):
+        self.set_abs(self.end, state, action, reward, next_state, cont, loss)
+        self.last_idx_abs = self.end
 
         self.end = (self.end + 1) % self.size_plus_one
         # end == start and yet we just added one element. This means the buffer has one
@@ -46,28 +44,36 @@ class GameMemory:
         if self.end == self.start:
             self.start = (self.start + 1) % self.size_plus_one
 
-        return last_idx
+
+    def set_abs(self, idx_abs, state, action, reward, next_state, cont, loss):
+        self.states[idx_abs] = state
+        self.actions[idx_abs] = action
+        self.rewards[idx_abs] = reward
+        self.next_states[idx_abs] = next_state
+        self.continues[idx_abs] = cont
+        self.losses[idx_abs] = loss
+
+
+    def get_abs(self, idx_abs):
+        return (self.states[idx_abs],
+                self.actions[idx_abs],
+                self.rewards[idx_abs],
+                self.next_states[idx_abs],
+                self.continues[idx_abs],
+                self.losses[idx_abs])
 
 
     def __setitem__(self, idx, row):
-        state, action, reward, next_state, cont = row
+        new_idx = (self.start + idx) % self.size_plus_one
 
-        self.states[idx] = state
-        self.actions[idx] = action
-        self.rewards[idx] = reward
-        self.next_states[idx] = next_state
-        self.continues[idx] = cont
+        self.set_abs(new_idx, row)
 
 
     def __getitem__(self, idx):
         if isinstance(idx, int):
             new_idx = (self.start + idx) % self.size_plus_one
 
-            return (self.states[new_idx],
-                    self.actions[new_idx],
-                    self.rewards[new_idx],
-                    self.next_states[new_idx],
-                    self.continues[new_idx])
+            return self.get_abs(new_idx)
         else:
             if idx.start is None:
                 start = 0
