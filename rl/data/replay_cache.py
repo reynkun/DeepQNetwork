@@ -45,6 +45,10 @@ class ReplayCache:
             self.start = (self.start + 1) % self.size_plus_one
 
 
+    def set_loss_abs(self, idx_abs, loss):
+        self.losses[idx_abs] = loss
+
+
     def set_abs(self, idx_abs, state, action, reward, next_state, cont, loss):
         self.states[idx_abs] = state
         self.actions[idx_abs] = action
@@ -103,3 +107,5 @@ class ReplayCache:
     def __iter__(self):
         for i in range(len(self)):
             yield self[i]
+
+
