@@ -15,9 +15,9 @@ class ReplayMemory:
 
     def __init__(self,
                  fn,
-                 input_height,
-                 input_width,
-                 input_channels,
+                 input_height=1,
+                 input_width=1,
+                 input_channels=1,
                  state_type='uint8',
                  max_size=MAX_SIZE,
                  cache_size=CACHE_SIZE):
@@ -26,17 +26,14 @@ class ReplayMemory:
         else:
             init = False
 
+        self.filename = fn
         self.data_file = h5py.File(fn, 'a')
-        self.state_type = state_type
 
-        if init:
-            self.create_dataset(input_height, input_width, input_channels, max_size)
-            self.clear()
-
-        self._start = self.data_file.attrs['start']
-        self._end = self.data_file.attrs['end']
-        self.max_size_plus_one = self.data_file.attrs['max_size_plus_one']
-        self.last_idx_abs = None
+        if not init:
+            input_height = self.data_file.attrs['input_height']
+            input_width = self.data_file.attrs['input_width']
+            input_channels = self.data_file.attrs['input_channels']
+            state_type = self.data_file.attrs['state_type']
 
         # init cache
         self.cache = ReplayCache(input_height,
@@ -48,17 +45,31 @@ class ReplayMemory:
         self.cache_map = {}
         self.cache_map_rev = {}
 
+        if init:
+            self.create_dataset(input_height, input_width, input_channels, state_type, max_size)
+            self.clear()
 
-    def create_dataset(self, input_height, input_width, input_channels, max_size):
+        self._start = self.data_file.attrs['start']
+        self._end = self.data_file.attrs['end']
+        self.max_size_plus_one = self.data_file.attrs['max_size_plus_one']
+        self.last_idx_abs = None
+
+
+    def create_dataset(self, input_height, input_width, input_channels, state_type, max_size):
         self.data_file.attrs['start'] = 0
         self.data_file.attrs['end'] = 0
         self.data_file.attrs['max_size_plus_one'] = max_size + 1
+        self.data_file.attrs['input_height'] = input_height
+        self.data_file.attrs['input_width'] = input_width
+        self.data_file.attrs['input_channels'] = input_channels
+        self.data_file.attrs['state_type'] = state_type
+
 
         self.max_size_plus_one = max_size + 1
 
         self.data_file.create_dataset('state',
                                       shape=(self.max_size_plus_one, input_height, input_width, input_channels),
-                                      dtype=self.state_type)
+                                      dtype=state_type)
         self.data_file.create_dataset('action',
                                       shape=(self.max_size_plus_one,),
                                       dtype='uint8')
@@ -67,7 +78,7 @@ class ReplayMemory:
                                       dtype='uint8')
         self.data_file.create_dataset('next_state',
                                       shape=(self.max_size_plus_one, input_height, input_width, input_channels),
-                                      dtype=self.state_type)
+                                      dtype=state_type)
         self.data_file.create_dataset('continue',
                                       shape=(self.max_size_plus_one,),
                                       dtype='bool')
@@ -76,6 +87,7 @@ class ReplayMemory:
                                       dtype='float16')
 
     def clear(self):
+        self.cache.clear()
         self.start = 0
         self.end = 0
 
@@ -99,8 +111,6 @@ class ReplayMemory:
 
             for j, col in enumerate([states, actions, rewards, next_states, continues, losses]):
                 col[i] = row[j]
-            # for j in range(6):
-            #     target[j][i] = row[j]
 
 
     def append(self, state, action, reward, next_state, cont, loss):
@@ -166,11 +176,29 @@ class ReplayMemory:
 
 
     def __getitem__(self, idx):
-        idx_abs = (self.start + idx) % self.max_size_plus_one
+        try:
+            idx_abs = (self.start + int(idx)) % self.max_size_plus_one
 
-        return self.get_abs(idx_abs)
+            return self.get_abs(idx_abs)
+        except TypeError:
+            if idx.start is None:
+                start = 0
+            else:
+                start = idx.start
 
-        #
+            if idx.stop is None:
+                stop = self.max_size_plus_one - 1
+            else:
+                stop = idx.stop
+
+            if idx.step is None:
+                step = 1
+            else:
+                step = idx.step
+
+            return [self[i] for i in range(start, stop, step)]
+
+    #
         # try:
         #     new_idx = (self.start + idx) % self.max_size_plus_one
         #
