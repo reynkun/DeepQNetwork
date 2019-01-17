@@ -142,10 +142,6 @@ class DeepQNetwork:
 
 
     def train(self):
-        self.train_func()
-
-
-    def train_func(self):
         self.header = 'train'
         env = gym.make(self.game_id)
         env.seed(int(time.time()))
@@ -193,10 +189,10 @@ class DeepQNetwork:
 
             # allocate memory
             if self.options['use_priority']:
-                if self.options['on_memory']:
-                    ReplayClass = ReplaySampler
-                else:
-                    ReplayClass = ReplaySampler
+                ReplayClass = ReplaySampler
+                # if self.options['on_memory']:
+                # else:
+                #     ReplayClass = ReplaySampler
             else:
                 ReplayClass = ReplayMemory
 
@@ -267,7 +263,6 @@ class DeepQNetwork:
 
                     # And save regularly
                     if step % save_steps == 0:
-                        self.log('saving model')
                         sess.model.game_count.load(self.game_count.value)
                         sess.save(self.save_path_prefix)
 
@@ -549,11 +544,17 @@ class DeepQNetwork:
 
 
     def play(self, num_games=1, use_epsilon=False, interval=60, no_display=False):
-        self.run_game_func(is_training=False,
-                           num_games=num_games,
-                           use_epsilon=use_epsilon,
-                           interval=interval,
-                           no_display=no_display)
+        env = gym.make(self.game_id)
+        env.seed(int(time.time()))
+
+        with self.get_session(load_model=True, save_model=False, env=env) as sess:
+            for i in self.run_game(sess,
+                          is_training=False,
+                          num_games=num_games,
+                          use_epsilon=use_epsilon,
+                          interval=interval,
+                          no_display=no_display):
+                pass
 
 
     def epsilon(self, step):

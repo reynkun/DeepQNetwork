@@ -50,9 +50,18 @@ class ReplaySampler:
     def sample_memories(self, states, actions, rewards, next_states, continues, losses, batch_size=32, tree_idxes=None):
         # num_tries = 0
 
+        indexes = {}
         for i in range(batch_size):
-            s = random.random() * self.sum_tree.total()
-            t_idx, d_idx, score, memory_idx = self.sum_tree.get_with_info(s)
+            memory_idx = None
+            count = 0
+            while memory_idx is None or memory_idx in indexes:
+                s = random.random() * self.sum_tree.total()
+                t_idx, d_idx, score, memory_idx = self.sum_tree.get_with_info(s)
+                indexes[memory_idx] = True
+                count += 1
+
+                if count > 1000:
+                    break
 
             row = self.replay_memory.get_abs(memory_idx)
 
