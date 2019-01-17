@@ -72,10 +72,10 @@ class GameAgent:
     def make_model(self):
         # set placeholders
         # print('input_channels:', self.input_channels)
-        self.X_action = tf.placeholder(tf.uint8, shape=[None])
+        self.X_action = tf.placeholder(tf.uint8, shape=[None], name='action')
         # target Q
         # self.y = tf.placeholder(tf.float32, shape=[None, 1])
-        self.y = tf.placeholder(tf.float32, shape=[None])
+        self.y = tf.placeholder(tf.float32, shape=[None], name='max_q_values')
 
         # save how many games we've played
         self.game_count = tf.Variable(0, trainable=False, name='game_count')
@@ -134,7 +134,7 @@ class GameAgent:
 
         if self.use_conv:
             conv_num_maps = [32, 64, 64]
-            conv_kernel_sizes = [8, 4, 3]
+            conv_kernel_sizes = [8, 4, 4]
             conv_strides = [4, 2, 1]
             conv_paddings = ['same'] * 3
             conv_activations = [tf.nn.relu] * 3
@@ -156,9 +156,10 @@ class GameAgent:
                                             padding=padding,
                                             activation=act_func)
 
-            input_layer = tf.reshape(last, 
-                                     shape=[-1, last.shape[1] * last.shape[2] * last.shape[3]])
+            # input_layer = tf.reshape(last,
+            #                          shape=[-1, last.shape[1] * last.shape[2] * last.shape[3]])
 
+            input_layer = tf.layers.flatten(last)
 
 
             if self.options['use_dueling']:

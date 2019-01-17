@@ -10,7 +10,7 @@ parser.add_argument('-m', '--model-save-prefix', dest='model_save_prefix', defau
 
 parser.add_argument('--no-double', dest='use_double', action='store_false')
 parser.add_argument('--nd', '--no-dueling', dest='use_dueling', action='store_false')
-parser.add_argument('--p', '--priority', dest='use_priority', default=False, action='store_true')
+parser.add_argument('--p', '--priority', dest='use_priority', action='store_false')
 parser.add_argument('--dir', '--save-dir', dest='save_dir', default='./data')
 parser.add_argument('--train-backward', '--ntb', dest='train_backward', action='store_false')
 parser.add_argument('--frame-skip', '--fs', dest='frame_skip', type=int)
