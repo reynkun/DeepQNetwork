@@ -111,7 +111,7 @@ class GameAgent:
                                                                                    self.num_outputs,
                                                                                    dtype=tf.float32),
                                                  axis=1)
-        self.max_q_values = tf.reduce_sum(self.target_q_values * tf.one_hot(self.X_action,
+        self.max_q_values = tf.reduce_sum(self.target_q_values * tf.one_hot(self.target_actions,
                                                                             self.num_outputs,
                                                                             dtype=tf.float32),
                                           axis=1)
@@ -134,6 +134,7 @@ class GameAgent:
 
         if self.use_conv:
             conv_num_maps = [32, 64, 64]
+            # conv_kernel_sizes = [8, 4, 3]
             conv_kernel_sizes = [8, 4, 4]
             conv_strides = [4, 2, 1]
             conv_paddings = ['same'] * 3
@@ -155,9 +156,6 @@ class GameAgent:
                                             strides=stride, 
                                             padding=padding,
                                             activation=act_func)
-
-            # input_layer = tf.reshape(last,
-            #                          shape=[-1, last.shape[1] * last.shape[2] * last.shape[3]])
 
             input_layer = tf.layers.flatten(last)
 

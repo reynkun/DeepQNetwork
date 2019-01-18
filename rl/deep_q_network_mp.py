@@ -16,8 +16,8 @@ import tensorflow as tf
 import numpy as np
 
 from .game.render import render_game
-from .data.replay_memory import ReplayMemory
-from .data.replay_cache import ReplayCache
+from .data.replay_memory import ReplayMemoryDisk
+from .data.replay_cache import ReplayMemory
 from .data.replay_sampler import ReplaySampler
 from .data.sum_tree import SumTree
 
@@ -214,7 +214,7 @@ class DeepQNetwork:
             if self.options['use_priority']:
                 ReplayClass = ReplaySampler
             else:
-                ReplayClass = ReplayMemory
+                ReplayClass = ReplayMemoryDisk
 
             self.replay_memory = ReplayClass(os.path.join(self.options['save_dir'],
                                                           '{}_replay_memory.hdf5'.format(
@@ -363,13 +363,13 @@ class DeepQNetwork:
             max_game_length = 50000
 
             if is_training:
-                game_memory = ReplayMemory(self.get_memory_save_path(),
-                                           sess.model.input_height,
-                                           sess.model.input_width,
-                                           sess.model.input_channels,
-                                           state_type=sess.model.state_type,
-                                           max_size=self.mem_save_size,
-                                           cache_size=0)
+                game_memory = ReplayMemoryDisk(self.get_memory_save_path(),
+                                               sess.model.input_height,
+                                               sess.model.input_width,
+                                               sess.model.input_channels,
+                                               state_type=sess.model.state_type,
+                                               max_size=self.mem_save_size,
+                                               cache_size=0)
 
             iteration = 0
             report_start_time = time.time()
@@ -444,13 +444,13 @@ class DeepQNetwork:
 
                                     if len(game_memory) >= self.mem_save_size:
                                         self.save_memory(game_memory, sess=sess)
-                                        game_memory = ReplayMemory(self.get_memory_save_path(),
-                                                                   sess.model.input_height,
-                                                                   sess.model.input_width,
-                                                                   sess.model.input_channels,
-                                                                   state_type=sess.model.state_type,
-                                                                   max_size=self.mem_save_size,
-                                                                   cache_size=0)
+                                        game_memory = ReplayMemoryDisk(self.get_memory_save_path(),
+                                                                       sess.model.input_height,
+                                                                       sess.model.input_width,
+                                                                       sess.model.input_channels,
+                                                                       state_type=sess.model.state_type,
+                                                                       max_size=self.mem_save_size,
+                                                                       cache_size=0)
 
                                 state = next_state
 
@@ -508,13 +508,13 @@ class DeepQNetwork:
 
                             if len(game_memory) >= self.mem_save_size:
                                 self.save_memory(game_memory, sess=sess)
-                                game_memory = ReplayMemory(self.get_memory_save_path(),
-                                                           sess.model.input_height,
-                                                           sess.model.input_width,
-                                                           sess.model.input_channels,
-                                                           state_type=sess.model.state_type,
-                                                           max_size=self.mem_save_size,
-                                                           cache_size=0)
+                                game_memory = ReplayMemoryDisk(self.get_memory_save_path(),
+                                                               sess.model.input_height,
+                                                               sess.model.input_width,
+                                                               sess.model.input_channels,
+                                                               state_type=sess.model.state_type,
+                                                               max_size=self.mem_save_size,
+                                                               cache_size=0)
 
                         state = next_state
 
@@ -850,8 +850,8 @@ class DeepQNetwork:
             #         self.replay_memory.append(*pickle.load(fin))
             #
 
-            memories = ReplayMemory(memory_fn,
-                                    cache_size=0)
+            memories = ReplayMemoryDisk(memory_fn,
+                                        cache_size=0)
 
             for i in range(len(memories)):
                 self.replay_memory.append(*memories[i])

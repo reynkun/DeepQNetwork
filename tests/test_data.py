@@ -6,149 +6,187 @@ import numpy as np
 test_base.TestBase.add_lib_dir_sys_path()
 
 
+from rl.data.replay_memory_disk import ReplayMemoryDisk
 from rl.data.replay_memory import ReplayMemory
-from rl.data.replay_cache import ReplayCache
 from rl.data.sum_tree import SumTree
 from rl.data.replay_sampler import ReplaySampler
 
 
 class TestData(test_base.TestBase):
-    def test_replay_memory_append(self):
+    def test_replay_memory_disk_append(self):
         data_fn = os.path.join(self.get_data_dir(), 'replay_test.hdf5')
 
         if os.path.exists(data_fn):
             os.unlink(data_fn)
 
-        rp = ReplayMemory(data_fn,
-                          1,
-                          1,
-                          1,
-                          max_size=2)
+        rp = ReplayMemoryDisk(data_fn,
+                              1,
+                              1,
+                              1,
+                              max_size=2)
 
         for i in range(2):
             rp.append(np.array([[[i]]]), i, i, np.array([[[i]]]), i, i * 0.01)
 
+            row = rp[i]
+
             self.assertEqual(len(rp), i+1)
-            self.assertEqual(rp[rp.last_index][1], i)
-            self.assertEqual(rp[rp.last_index][2], i)
-            self.assertEqual(rp[rp.last_index][3], i)
-            self.assertEqual(rp[rp.last_index][4], i)
-            self.assertAlmostEqual(rp[rp.last_index][5], i * 0.01, places=3)
+            self.assertEqual(row['state'][0], i)
+            self.assertEqual(row['action'], i)
+            self.assertEqual(row['reward'], i)
+            self.assertEqual(row['next_state'][0], i)
+            self.assertEqual(row['cont'], i)
+            self.assertAlmostEqual(row['loss'], i * 0.01, places=3)
 
-
-    def test_replay_memory_overwrite_1(self):
+    def test_replay_memory_disk_copy(self):
         data_fn = os.path.join(self.get_data_dir(), 'replay_test.hdf5')
 
         if os.path.exists(data_fn):
             os.unlink(data_fn)
 
-        rp = ReplayMemory(data_fn,
-                          1,
-                          1,
-                          1,
-                          max_size=2,
-                          cache_size=0)
+        rp = ReplayMemoryDisk(data_fn,
+                              1,
+                              1,
+                              1,
+                              max_size=2)
+
+        for i in range(2):
+            rp.append(np.array([[[i]]]), i, i, np.array([[[i]]]), i, i * 0.01)
+
+            row = rp[i]
+
+        target = ReplayMemory(1, 1, 1, 2)
+        for i in range(2):
+            rp.copy(i, target, i)
+
+            self.assertEqual(target[i]['state'][0][0][0], i)
+            self.assertEqual(target[i]['action'], i)
+            self.assertEqual(target[i]['reward'], i)
+            self.assertEqual(target[i]['next_state'][0][0][0], i)
+            self.assertEqual(target[i]['cont'], i > 0)
+            self.assertAlmostEqual(target[i]['loss'], i * 0.01, places=3)
+
+            self.assertEqual(target.states[i][0][0][0], i)
+            self.assertEqual(target.actions[i], i)
+            self.assertEqual(target.rewards[i], i)
+            self.assertEqual(target.next_states[i][0][0][0], i)
+            self.assertEqual(target.continues[i], i > 0)
+            self.assertAlmostEqual(target.losses[i], i * 0.01, places=3)
+
+
+    def test_replay_memory_disk_overwrite_1(self):
+        data_fn = os.path.join(self.get_data_dir(), 'replay_test.hdf5')
+
+        if os.path.exists(data_fn):
+            os.unlink(data_fn)
+
+        rp = ReplayMemoryDisk(data_fn,
+                              1,
+                              1,
+                              1,
+                              max_size=2,
+                              cache_size=0)
 
         for i in range(3):
             rp.append(np.array([[[i]]]), i, i, np.array([[[i]]]), i, i * 0.01)
 
 
         self.assertEqual(len(rp), 2)
-        self.assertEqual(rp[0][1], 1)
-        self.assertAlmostEqual (float(rp[0][5]), 0.01, places=3)
-        self.assertEqual(rp[1][1], 2)
-        self.assertAlmostEqual(float(rp[1][5]), 0.02, places=3)
+        self.assertEqual(rp[0]['action'], 2)
+        self.assertAlmostEqual (float(rp[0]['loss']), 0.02, places=3)
+        self.assertEqual(rp[1]['action'], 1)
+        self.assertAlmostEqual(float(rp[1]['loss']), 0.01, places=3)
 
 
-    def test_replay_memory_overwrite_2(self):
+    def test_replay_memory_disk_overwrite_2(self):
         data_fn = os.path.join(self.get_data_dir(), 'replay_test.hdf5')
 
         if os.path.exists(data_fn):
             os.unlink(data_fn)
 
-        rp = ReplayMemory(data_fn,
-                          1,
-                          1,
-                          1,
-                          max_size=2,
-                          cache_size=5)
+        rp = ReplayMemoryDisk(data_fn,
+                              1,
+                              1,
+                              1,
+                              max_size=2,
+                              cache_size=5)
 
         i = 0
         rp.append(np.array([[[i]]]), i, i, np.array([[[i]]]), i, i * 0.01)
         i = 1
         rp.append(np.array([[[i]]]), i, i, np.array([[[i]]]), i, i * 0.01)
-        self.assertEqual(rp[1][1], 1)
-        self.assertEqual(rp[0][1], 0)
+        self.assertEqual(rp[1]['action'], 1)
+        self.assertEqual(rp[0]['action'], 0)
         i = 2
         rp.append(np.array([[[i]]]), i, i, np.array([[[i]]]), i, i * 0.01)
 
 
-        self.assertEqual(rp[0][1], 1)
-        self.assertEqual(rp[1][1], 2)
+        self.assertEqual(rp[0]['action'], 2)
+        self.assertEqual(rp[1]['action'], 1)
 
 
-    def test_replay_memory_overwrite_2(self):
+    def test_replay_memory_disk_overwrite_3(self):
         data_fn = os.path.join(self.get_data_dir(), 'replay_test.hdf5')
 
         if os.path.exists(data_fn):
             os.unlink(data_fn)
 
-        rp = ReplayMemory(data_fn,
-                          1,
-                          1,
-                          1,
-                          max_size=2,
-                          cache_size=5)
+        rp = ReplayMemoryDisk(data_fn,
+                              1,
+                              1,
+                              1,
+                              max_size=2,
+                              cache_size=5)
 
         for i in range(5):
             rp.append(np.array([[[i]]]), i, i, np.array([[[i]]]), i, i * 0.01)
 
-        self.assertEqual(rp[0][1], 3)
-        self.assertEqual(rp[1][1], 4)
+        self.assertEqual(rp[0]['action'], 4)
+        self.assertEqual(rp[1]['action'], 3)
 
 
-    def test_replay_memory_cache_1(self):
+    def test_replay_memory_disk_cache_1(self):
         data_fn = os.path.join(self.get_data_dir(), 'replay_test.hdf5')
 
         if os.path.exists(data_fn):
             os.unlink(data_fn)
 
-        rp = ReplayMemory(data_fn,
-                          1,
-                          1,
-                          1,
-                          max_size=10,
-                          cache_size=1)
+        rp = ReplayMemoryDisk(data_fn,
+                              1,
+                              1,
+                              1,
+                              max_size=10,
+                              cache_size=1)
 
         for i in range(10):
             rp.append(np.array([[[i]]]), i, i, np.array([[[i]]]), i, i * 0.01)
 
-        self.assertEqual(rp[0][1], 0)
-        self.assertEqual(rp[1][1], 1)
-        self.assertEqual(rp[2][1], 2)
-        self.assertEqual(rp[0][1], 0)
+        self.assertEqual(rp[0]['action'], 0)
+        self.assertEqual(rp[1]['action'], 1)
+        self.assertEqual(rp[2]['action'], 2)
+        self.assertEqual(rp[0]['action'], 0)
 
 
-    def test_replay_memory_cache_2(self):
+    def test_replay_memory_disk_cache_2(self):
         data_fn = os.path.join(self.get_data_dir(), 'replay_test.hdf5')
 
         if os.path.exists(data_fn):
             os.unlink(data_fn)
 
-        rp = ReplayMemory(data_fn,
-                          1,
-                          1,
-                          1,
-                          max_size=2,
-                          cache_size=2)
+        rp = ReplayMemoryDisk(data_fn,
+                              1,
+                              1,
+                              1,
+                              max_size=2,
+                              cache_size=2)
 
         i = 0
         rp.append(np.array([[[i]]]), i, i, np.array([[[i]]]), i, i * 0.01)
-        self.assertEqual(rp[0][1], 0)
+        self.assertEqual(rp[0]['action'], 0)
 
         i = 1
         rp.append(np.array([[[i]]]), i, i, np.array([[[i]]]), i, i * 0.01)
-        self.assertEqual(rp[1][1], 1)
+        self.assertEqual(rp[1]['action'], 1)
 
         i = 2
         rp.append(np.array([[[i]]]), i, i, np.array([[[i]]]), i, i * 0.01)
@@ -156,22 +194,22 @@ class TestData(test_base.TestBase):
         i = 3
         rp.append(np.array([[[i]]]), i, i, np.array([[[i]]]), i, i * 0.01)
 
-        self.assertEqual(rp[0][1], 2)
-        self.assertEqual(rp[1][1], 3)
+        self.assertEqual(rp[0]['action'], 2)
+        self.assertEqual(rp[1]['action'], 3)
 
 
-    def test_replay_memory_sample_1(self):
+    def test_replay_memory_disk_sample_1(self):
         data_fn = os.path.join(self.get_data_dir(), 'replay_test.hdf5')
 
         if os.path.exists(data_fn):
             os.unlink(data_fn)
 
-        rp = ReplayMemory(data_fn,
-                          1,
-                          1,
-                          1,
-                          max_size=10,
-                          cache_size=1)
+        rp = ReplayMemoryDisk(data_fn,
+                              1,
+                              1,
+                              1,
+                              max_size=10,
+                              cache_size=1)
 
         num_values = 10
         for i in range(num_values):
@@ -179,12 +217,15 @@ class TestData(test_base.TestBase):
 
 
         batch_size = 6
-        target = (np.zeros((batch_size, 1, 1, 1), dtype='uint8'),
-                  np.zeros((batch_size,), dtype='uint8'),
-                  np.zeros((batch_size,), dtype='uint8'),
-                  np.zeros((batch_size, 1, 1, 1), dtype='uint8'),
-                  np.zeros((batch_size,), dtype='bool'),
-                  np.zeros((batch_size,), dtype='float16'))
+        # target = (np.zeros((batch_size, 1, 1, 1), dtype='uint8'),
+        #           np.zeros((batch_size,), dtype='uint8'),
+        #           np.zeros((batch_size,), dtype='uint8'),
+        #           np.zeros((batch_size, 1, 1, 1), dtype='uint8'),
+        #           np.zeros((batch_size,), dtype='bool'),
+        #           np.zeros((batch_size,), dtype='float16'))
+
+        target = ReplayMemory(1, 1, 1, max_size=batch_size)
+
 
         values = {}
         count = 0
@@ -193,36 +234,36 @@ class TestData(test_base.TestBase):
             if num_batches > 10:
                 break
 
-            rp.sample_memories(*target, batch_size=batch_size)
+            rp.sample_memories(target, batch_size=batch_size)
 
             for i in range(batch_size):
-                val = target[1][i]
+                val = target[i]['action']
 
                 if val not in values:
                     values[val] = True
                     count += 1
 
-                self.assertGreater(target[5][i], -0.001)
-                self.assertLess(target[5][i], 0.10)
+                self.assertGreater(target[5]['loss'], -0.001)
+                self.assertLess(target[5]['loss'], 0.10)
 
             num_batches += 1
 
         self.assertEqual(len(values), num_values)
 
 
-    def test_replay_memory_sample_2(self):
+    def test_replay_memory_disk_sample_2(self):
         data_fn = os.path.join(self.get_data_dir(), 'replay_test.hdf5')
 
         if os.path.exists(data_fn):
             os.unlink(data_fn)
 
-        rp = ReplayMemory(data_fn,
-                          1,
-                          1,
-                          1,
-                          max_size=10,
-                          cache_size=1,
-                          state_type='uint8')
+        rp = ReplayMemoryDisk(data_fn,
+                              1,
+                              1,
+                              1,
+                              max_size=10,
+                              cache_size=1,
+                              state_type='uint8')
 
         num_values = 10
         for i in range(num_values):
@@ -230,18 +271,7 @@ class TestData(test_base.TestBase):
 
         batch_size = 6
 
-        states = np.zeros((batch_size,
-                           1,
-                           1,
-                           1), dtype='uint8')
-        actions = np.zeros((batch_size,), dtype='uint8')
-        rewards = np.zeros((batch_size,), dtype='uint8')
-        next_states = np.zeros((batch_size,
-                                1,
-                                1,
-                                1), dtype='uint8')
-        continues = np.zeros((batch_size,), dtype='bool')
-        losses = np.zeros((batch_size,), dtype='float16')
+        target = ReplayMemory(1, 1, 1, max_size=batch_size)
 
         values = {}
         count = 0
@@ -251,46 +281,43 @@ class TestData(test_base.TestBase):
             if num_batches > 10:
                 break
 
-            rp.sample_memories(states,
-                               actions,
-                               rewards,
-                               next_states,
-                               continues,
-                               losses,
+            rp.sample_memories(target,
                                batch_size=batch_size)
 
             for i in range(batch_size):
-                val = states[i][0][0][0]
+                # print(i, target[i])
+
+                val = target.states[i][0][0][0]
 
                 if val not in values:
                     values[val] = True
                     count += 1
 
-                self.assertEqual(states[i][0][0][0], val)
-                self.assertEqual(actions[i], val+1)
-                self.assertEqual(rewards[i], val+2)
-                self.assertEqual(next_states[i][0][0][0], val+3)
-                self.assertEqual(continues[i], val+4 > 0)
-                self.assertAlmostEqual(losses[i], (val+5) * 0.01, places=2)
+                self.assertEqual(target.states[i][0][0][0], val)
+                self.assertEqual(target.actions[i], val+1)
+                self.assertEqual(target.rewards[i], val+2)
+                self.assertEqual(target.next_states[i][0][0][0], val+3)
+                self.assertEqual(target.continues[i], val+4 > 0)
+                self.assertAlmostEqual(target.losses[i], (val+5) * 0.01, places=2)
 
             num_batches += 1
 
         self.assertEqual(len(values), num_values)
 
 
-    def test_game_memory_cache_1(self):
-        rp = ReplayCache(  1,
+    def test_replay_memory_1(self):
+        rp = ReplayMemory(1,
                           1,
                           1,
                           max_size=2)
 
         i = 0
         rp.append(np.array([[[i]]]), i, i, np.array([[[i]]]), i, i * 0.01)
-        self.assertEqual(rp[0][1], 0)
+        self.assertEqual(rp[0]['action'], 0)
 
         i = 1
         rp.append(np.array([[[i]]]), i, i, np.array([[[i]]]), i, i * 0.01)
-        self.assertEqual(rp[1][1], 1)
+        self.assertEqual(rp[1]['action'], 1)
 
         i = 2
         rp.append(np.array([[[i]]]), i, i, np.array([[[i]]]), i, i * 0.01)
@@ -299,15 +326,21 @@ class TestData(test_base.TestBase):
         rp.append(np.array([[[i]]]), i, i, np.array([[[i]]]), i, i * 0.01)
 
         self.assertEqual(len(rp), 2)
-        self.assertEqual(rp[0][1], 2)
-        self.assertEqual(rp[1][1], 3)
+
+        for i, val in enumerate([2, 3]):
+            self.assertEqual(rp[i]['state'], val)
+            self.assertEqual(rp[i]['action'], val)
+            self.assertEqual(rp[i]['reward'], val)
+            self.assertEqual(rp[i]['next_state'], val)
+            self.assertEqual(rp[i]['cont'], val>0)
+            self.assertAlmostEqual(rp[i]['loss'], val * 0.01, places=3)
 
 
-    def test_game_memory_cache_2(self):
-        rp = ReplayCache(1,
-                         1,
-                         1,
-                         max_size=2)
+    def test_replay_memory_2(self):
+        rp = ReplayMemory(1,
+                          1,
+                          1,
+                          max_size=2)
 
         i = 0
 
@@ -394,12 +427,12 @@ class TestData(test_base.TestBase):
         if os.path.exists(data_fn):
             os.unlink(data_fn)
 
-        rp = ReplaySampler(data_fn,
-                           1,
-                           1,
-                           1,
-                           max_size=2,
-                           cache_size=0)
+        rp = ReplaySampler(ReplayMemoryDisk(data_fn,
+                                            1,
+                                            1,
+                                            1,
+                                            max_size=2,
+                                            cache_size=0))
 
         for i in range(3):
             rp.append(np.array([[[i]]]), i, i, np.array([[[i]]]), i, i * 0.01)
@@ -410,10 +443,10 @@ class TestData(test_base.TestBase):
         # self.assertEqual(rp[1][1], 1)
         # self.assertAlmostEqual(float(rp[1][5]), 0.01, places=3)
 
-        self.assertEqual(rp[0][1], 1)
-        self.assertAlmostEqual(float(rp[0][5]), 0.01, places=3)
-        self.assertEqual(rp[1][1], 2)
-        self.assertAlmostEqual(float(rp[1][5]), 0.02, places=3)
+        self.assertEqual(rp[0]['action'], 2)
+        self.assertAlmostEqual(float(rp[0]['loss']), 0.02, places=3)
+        self.assertEqual(rp[1]['action'], 1)
+        self.assertAlmostEqual(float(rp[1]['loss']), 0.01, places=3)
 
 
     def test_replay_sampler_overwrite_2(self):
@@ -422,21 +455,21 @@ class TestData(test_base.TestBase):
         if os.path.exists(data_fn):
             os.unlink(data_fn)
 
-        rp = ReplaySampler(data_fn,
-                           1,
-                           1,
-                           1,
-                           max_size=2,
-                           cache_size=2)
+        rp = ReplaySampler(ReplayMemoryDisk(data_fn,
+                                            1,
+                                            1,
+                                            1,
+                                            max_size=2,
+                                            cache_size=2))
 
         i = 0
         rp.append(np.array([[[i]]]), i, i, np.array([[[i]]]), i, i * 0.01)
-        self.assertEqual(rp[0][1], 0)
+        self.assertEqual(rp[0]['action'], 0)
         self.assertEqual(len(rp), 1)
 
         i = 1
         rp.append(np.array([[[i]]]), i, i, np.array([[[i]]]), i, i * 0.01)
-        self.assertEqual(rp[1][1], 1)
+        self.assertEqual(rp[1]['action'], 1)
         self.assertEqual(len(rp), 2)
 
         i = 2
@@ -446,8 +479,8 @@ class TestData(test_base.TestBase):
         rp.append(np.array([[[i]]]), i, i, np.array([[[i]]]), i, i * 0.01)
 
         self.assertEqual(len(rp), 2)
-        self.assertEqual(rp[0][1], 2)
-        self.assertEqual(rp[1][1], 3)
+        self.assertEqual(rp[0]['action'], 2)
+        self.assertEqual(rp[1]['action'], 3)
 
 
     def test_replay_sampler_overwrite_3(self):
@@ -456,26 +489,26 @@ class TestData(test_base.TestBase):
         if os.path.exists(data_fn):
             os.unlink(data_fn)
 
-        rp = ReplaySampler(data_fn,
-                           1,
-                           1,
-                           1,
-                           max_size=2,
-                           cache_size=0)
+        rp = ReplaySampler(ReplayMemoryDisk(data_fn,
+                                            1,
+                                            1,
+                                            1,
+                                            max_size=2,
+                                            cache_size=0))
 
         for i in range(5):
             rp.append(np.array([[[i]]]), i, i, np.array([[[i]]]), i, i * 0.01)
 
         self.assertEqual(len(rp), 2)
-        # self.assertEqual(rp[0][1], 4)
-        # self.assertAlmostEqual(float(rp[0][5]), 0.04, places=3)
-        # self.assertEqual(rp[1][1], 3)
-        # self.assertAlmostEqual(float(rp[1][5]), 0.03, places=3)
 
-        self.assertEqual(rp[0][1], 3)
-        self.assertAlmostEqual(float(rp[0][5]), 0.03, places=3)
-        self.assertEqual(rp[1][1], 4)
-        self.assertAlmostEqual(float(rp[1][5]), 0.04, places=3)
+
+        for i, val in enumerate([4, 3]):
+            self.assertEqual(rp[i]['state'], val)
+            self.assertEqual(rp[i]['action'], val)
+            self.assertEqual(rp[i]['reward'], val)
+            self.assertEqual(rp[i]['next_state'], val)
+            self.assertEqual(rp[i]['cont'], val > 0)
+            self.assertAlmostEqual(rp[i]['loss'], val * 0.01, places=3)
 
 
     def test_replay_sampler_sample_1(self):
@@ -483,13 +516,12 @@ class TestData(test_base.TestBase):
 
         if os.path.exists(data_fn):
             os.unlink(data_fn)
-
-        rp = ReplaySampler(data_fn,
-                           1,
-                           1,
-                           1,
-                           max_size=2,
-                           cache_size=2)
+        rp = ReplaySampler(ReplayMemoryDisk(data_fn,
+                                            1,
+                                            1,
+                                            1,
+                                            max_size=2,
+                                            cache_size=2))
 
         i = 5
         rp.append(np.array([[[i]]]), i, i, np.array([[[i]]]), i, i * 0.01)
@@ -502,22 +534,23 @@ class TestData(test_base.TestBase):
         self.assertAlmostEqual(rp.sum_tree.total(), 0.03, places=2)
 
         batch_size = 6
-        target = (np.zeros((batch_size, 1, 1, 1), dtype='uint8'),
-                  np.zeros((batch_size,), dtype='uint8'),
-                  np.zeros((batch_size,), dtype='uint8'),
-                  np.zeros((batch_size, 1, 1, 1), dtype='uint8'),
-                  np.zeros((batch_size,), dtype='bool'),
-                  np.zeros((batch_size,), dtype='float16'))
+        # target = (np.zeros((batch_size, 1, 1, 1), dtype='uint8'),
+        #           np.zeros((batch_size,), dtype='uint8'),
+        #           np.zeros((batch_size,), dtype='uint8'),
+        #           np.zeros((batch_size, 1, 1, 1), dtype='uint8'),
+        #           np.zeros((batch_size,), dtype='bool'),
+        #           np.zeros((batch_size,), dtype='float16'))
+        target = ReplayMemory(1, 1, 1, max_size=batch_size)
 
 
         values = {}
         count = 0
         num_batches = 0
         for i in range(100):
-            rp.sample_memories(*target, batch_size=batch_size)
+            rp.sample_memories(target, batch_size=batch_size)
 
-            for i in range(batch_size):
-                val = target[1][i]
+            for j in range(batch_size):
+                val = target[j]['action']
 
                 if val not in values:
                     values[val] = 0
@@ -539,13 +572,12 @@ class TestData(test_base.TestBase):
         if os.path.exists(data_fn):
             os.unlink(data_fn)
 
-        rp = ReplaySampler(data_fn,
-                          1,
-                          1,
-                          1,
-                          max_size=10,
-                          cache_size=1,
-                          state_type='uint8')
+        rp = ReplaySampler(ReplayMemoryDisk(data_fn,
+                                            1,
+                                            1,
+                                            1,
+                                            max_size=10,
+                                            cache_size=1))
 
         num_values = 10
         for i in range(num_values):
@@ -553,18 +585,7 @@ class TestData(test_base.TestBase):
 
         batch_size = 6
 
-        states = np.zeros((batch_size,
-                           1,
-                           1,
-                           1), dtype='uint8')
-        actions = np.zeros((batch_size,), dtype='uint8')
-        rewards = np.zeros((batch_size,), dtype='uint8')
-        next_states = np.zeros((batch_size,
-                                1,
-                                1,
-                                1), dtype='uint8')
-        continues = np.zeros((batch_size,), dtype='bool')
-        losses = np.zeros((batch_size,), dtype='float16')
+        target = ReplayMemory(1, 1, 1, batch_size)
 
         values = {}
         count = 0
@@ -574,16 +595,10 @@ class TestData(test_base.TestBase):
             if num_batches > 10:
                 break
 
-            rp.sample_memories(states,
-                               actions,
-                               rewards,
-                               next_states,
-                               continues,
-                               losses,
-                               batch_size=batch_size)
+            rp.sample_memories(target, batch_size=batch_size)
 
             for i in range(batch_size):
-                val = actions[i]
+                val = target.actions[i]
 
                 if val not in values:
                     values[val] = 0
@@ -591,12 +606,12 @@ class TestData(test_base.TestBase):
 
                 values[val] += 1
 
-                self.assertEqual(states[i][0][0][0], val)
-                self.assertEqual(actions[i], val)
-                self.assertEqual(rewards[i], val)
-                self.assertEqual(next_states[i][0][0], val)
-                self.assertEqual(continues[i], val > 0)
-                self.assertAlmostEqual(losses[i], val * 0.01, places=2)
+                self.assertEqual(target.states[i][0][0][0], val)
+                self.assertEqual(target.actions[i], val)
+                self.assertEqual(target.rewards[i], val)
+                self.assertEqual(target.next_states[i][0][0], val)
+                self.assertEqual(target.continues[i], val > 0)
+                self.assertAlmostEqual(target.losses[i], val * 0.01, places=2)
 
             num_batches += 1
 
@@ -611,20 +626,16 @@ class TestData(test_base.TestBase):
         if os.path.exists(data_fn):
             os.unlink(data_fn)
 
-        rp = ReplaySampler(data_fn,
-                           1,
-                           1,
-                           1,
-                           max_size=2,
-                           cache_size=2)
+        rp = ReplaySampler(ReplayMemoryDisk(data_fn,
+                                            1,
+                                            1,
+                                            1,
+                                            max_size=2,
+                                            cache_size=2))
 
         i = 5
         rp.append(np.array([[[i]]]), i, i, np.array([[[i]]]), i, i * 0.01)
         rp.append(np.array([[[i]]]), i, i, np.array([[[i]]]), i, i * 0.01)
-
-        # print(rp.sum_tree.data[rp.sum_tree.get_data_idx(0)])
-        # print('-->', rp.sum_tree.data[rp.sum_tree.get_data_idx(1)])
-        # print('-->', rp.sum_tree.data[rp.sum_tree.get_data_idx(2)])
 
         self.assertEqual(rp.sum_tree.data[rp.sum_tree.get_data_idx(1)], 0)
         self.assertEqual(rp.sum_tree.data[rp.sum_tree.get_data_idx(2)], 1)
@@ -632,38 +643,27 @@ class TestData(test_base.TestBase):
         for i in range(3):
             rp.append(np.array([[[i]]]), i, i, np.array([[[i]]]), i, i * 0.01)
 
-            # print(i, '-->', rp.sum_tree.data[rp.sum_tree.get_data_idx(1)])
-            # print(i, '-->', rp.sum_tree.data[rp.sum_tree.get_data_idx(2)])
-
-        # print('total:', rp.sum_tree.total())
         self.assertAlmostEqual(rp.sum_tree.total(), 0.03, places=2)
-
-        self.assertAlmostEqual(rp.replay_memory.data_file['loss'][0], 0.01, places=2)
-        self.assertAlmostEqual(rp.replay_memory.data_file['loss'][1], 0.02, places=2)
-        self.assertAlmostEqual(rp.replay_memory.data_file['loss'][2], 0.0, places=2)
+        self.assertAlmostEqual(rp.replay_memory.data_file['losses'][0], 0.02, places=2)
+        self.assertAlmostEqual(rp.replay_memory.data_file['losses'][1], 0.01, places=2)
 
 
         batch_size = 6
-        target = (np.zeros((batch_size, 1, 1, 1), dtype='uint8'),
-                  np.zeros((batch_size,), dtype='uint8'),
-                  np.zeros((batch_size,), dtype='uint8'),
-                  np.zeros((batch_size, 1, 1, 1), dtype='uint8'),
-                  np.zeros((batch_size,), dtype='bool'),
-                  np.zeros((batch_size,), dtype='float16'))
+        target = ReplayMemory(1, 1, 1, batch_size)
 
         tree_idxes = []
-        rp.sample_memories(*target,
+        rp.sample_memories(target,
                            batch_size=batch_size,
                            tree_idxes=tree_idxes)
 
         self.assertTrue(len(tree_idxes) > 0)
 
         # print(tree_idxes)
+        # indexes = {}
         # for i in range(6):
-        #     print(target[1][i], target[5][i], tree_idxes[i])
+        #     print(target[i]['action'], target[i]['loss'], tree_idxes[i])
+        #     indexes[target[i]['action']] = tree_idxes[i]
 
-        # self.assertEqual(rp.sum_tree.data[rp.sum_tree.get_data_idx(2)], 2)
-        # self.assertEqual(rp.sum_tree.data[rp.sum_tree.get_data_idx(1)], 1)
 
         rp.update_sum_tree([1, 2], [0.4, 0.6])
 
@@ -673,9 +673,9 @@ class TestData(test_base.TestBase):
         count = 0
         num_batches = 0
         for i in range(100):
-            rp.sample_memories(*target, batch_size=batch_size, tree_idxes=tree_idxes)
+            rp.sample_memories(target, batch_size=batch_size, tree_idxes=tree_idxes)
             for i in range(batch_size):
-                val = target[1][i]
+                val = target[1]['action']
 
                 if val not in values:
                     values[val] = 0
@@ -690,10 +690,10 @@ class TestData(test_base.TestBase):
         self.assertAlmostEqual(values[2] / total, 0.4, places=1)
         self.assertAlmostEqual(values[1] / total, 0.6, places=1)
 
-        self.assertAlmostEqual(rp.replay_memory.data_file['loss'][0], 0.6, places=1)
-        self.assertAlmostEqual(rp.replay_memory.data_file['action'][0], 1, places=1)
-        self.assertAlmostEqual(rp.replay_memory.data_file['loss'][1], 0.4, places=1)
-        self.assertAlmostEqual(rp.replay_memory.data_file['action'][1], 2, places=1)
+        self.assertAlmostEqual(rp.replay_memory.data_file['losses'][1], 0.6, places=1)
+        self.assertAlmostEqual(rp.replay_memory.data_file['actions'][1], 1, places=1)
+        self.assertAlmostEqual(rp.replay_memory.data_file['losses'][0], 0.4, places=1)
+        self.assertAlmostEqual(rp.replay_memory.data_file['actions'][0], 2, places=1)
 
 
     def test_replay_sampler_reload_2(self):
@@ -702,12 +702,12 @@ class TestData(test_base.TestBase):
         if os.path.exists(data_fn):
             os.unlink(data_fn)
 
-        rp = ReplaySampler(data_fn,
-                           1,
-                           1,
-                           1,
-                           max_size=2,
-                           cache_size=2)
+        rp = ReplaySampler(ReplayMemoryDisk(data_fn,
+                                            1,
+                                            1,
+                                            1,
+                                            max_size=2,
+                                            cache_size=2))
 
         i = 5
         rp.append(np.array([[[i]]]), i, i, np.array([[[i]]]), i, i * 0.01)
@@ -729,20 +729,20 @@ class TestData(test_base.TestBase):
         # print('total:', rp.sum_tree.total())
         self.assertAlmostEqual(rp.sum_tree.total(), 0.03, places=2)
 
-        self.assertAlmostEqual(rp.replay_memory.data_file['loss'][0], 0.01, places=2)
-        self.assertAlmostEqual(rp.replay_memory.data_file['loss'][1], 0.02, places=2)
-        self.assertAlmostEqual(rp.replay_memory.data_file['loss'][2], 0.0, places=2)
+        self.assertAlmostEqual(rp.replay_memory.data_file['losses'][0], 0.02, places=2)
+        self.assertAlmostEqual(rp.replay_memory.data_file['losses'][1], 0.01, places=2)
 
         batch_size = 6
-        target = (np.zeros((batch_size, 1, 1, 1), dtype='uint8'),
-                  np.zeros((batch_size,), dtype='uint8'),
-                  np.zeros((batch_size,), dtype='uint8'),
-                  np.zeros((batch_size, 1, 1, 1), dtype='uint8'),
-                  np.zeros((batch_size,), dtype='bool'),
-                  np.zeros((batch_size,), dtype='float16'))
+        target = ReplayMemory(1, 1, 1, batch_size)
+        # target = (np.zeros((batch_size, 1, 1, 1), dtype='uint8'),
+        #           np.zeros((batch_size,), dtype='uint8'),
+        #           np.zeros((batch_size,), dtype='uint8'),
+        #           np.zeros((batch_size, 1, 1, 1), dtype='uint8'),
+        #           np.zeros((batch_size,), dtype='bool'),
+        #           np.zeros((batch_size,), dtype='float16'))
 
         tree_idxes = []
-        rp.sample_memories(*target,
+        rp.sample_memories(target,
                            batch_size=batch_size,
                            tree_idxes=tree_idxes)
 
@@ -761,13 +761,12 @@ class TestData(test_base.TestBase):
 
         rp.close()
 
-
-        rp2 = ReplaySampler(data_fn,
-                                 1,
-                                 1,
-                                 1,
-                                 max_size=2,
-                                 cache_size=2)
+        rp2 = ReplaySampler(ReplayMemoryDisk(data_fn,
+                                             1,
+                                             1,
+                                             1,
+                                             max_size=2,
+                                            cache_size=2))
 
         self.assertEqual(rp2.sum_tree.total(), 1.0)
 
@@ -775,9 +774,9 @@ class TestData(test_base.TestBase):
         count = 0
         num_batches = 0
         for i in range(100):
-            rp2.sample_memories(*target, batch_size=batch_size, tree_idxes=tree_idxes)
+            rp2.sample_memories(target, batch_size=batch_size, tree_idxes=tree_idxes)
             for i in range(batch_size):
-                val = target[1][i]
+                val = target[1]['action']
 
                 if val not in values:
                     values[val] = 0
@@ -792,10 +791,10 @@ class TestData(test_base.TestBase):
         self.assertAlmostEqual(values[2] / total, 0.4, places=1)
         self.assertAlmostEqual(values[1] / total, 0.6, places=1)
 
-        self.assertAlmostEqual(rp2.replay_memory.data_file['loss'][0], 0.6, places=1)
-        self.assertAlmostEqual(rp2.replay_memory.data_file['action'][0], 1, places=1)
-        self.assertAlmostEqual(rp2.replay_memory.data_file['loss'][1], 0.4, places=1)
-        self.assertAlmostEqual(rp2.replay_memory.data_file['action'][1], 2, places=1)
+        self.assertAlmostEqual(rp2.replay_memory.data_file['losses'][1], 0.6, places=1)
+        self.assertAlmostEqual(rp2.replay_memory.data_file['actions'][1], 1, places=1)
+        self.assertAlmostEqual(rp2.replay_memory.data_file['losses'][0], 0.4, places=1)
+        self.assertAlmostEqual(rp2.replay_memory.data_file['actions'][0], 2, places=1)
 
 
     def test_replay_sampler_reload_1(self):
@@ -804,12 +803,12 @@ class TestData(test_base.TestBase):
         if os.path.exists(data_fn):
             os.unlink(data_fn)
 
-        rp = ReplaySampler(data_fn,
-                           1,
-                           1,
-                           1,
-                           max_size=2,
-                           cache_size=2)
+        rp = ReplaySampler(ReplayMemoryDisk(data_fn,
+                                            1,
+                                            1,
+                                            1,
+                                            max_size=2,
+                                            cache_size=2))
 
         i = 5
         rp.append(np.array([[[i]]]), i, i, np.array([[[i]]]), i, i * 0.01)
@@ -821,31 +820,26 @@ class TestData(test_base.TestBase):
         rp.close()
         rp = None
 
-        rp2 = ReplaySampler(data_fn,
-                            1,
-                            1,
-                            1,
-                            max_size=2,
-                            cache_size=2)
+        rp2 = ReplaySampler(ReplayMemoryDisk(data_fn,
+                                            1,
+                                            1,
+                                            1,
+                                            max_size=2,
+                                            cache_size=2))
 
         self.assertAlmostEqual(rp2.sum_tree.total(), 0.03, places=2)
 
         batch_size = 6
-        target = (np.zeros((batch_size, 1, 1, 1), dtype='uint8'),
-                  np.zeros((batch_size,), dtype='uint8'),
-                  np.zeros((batch_size,), dtype='uint8'),
-                  np.zeros((batch_size, 1, 1, 1), dtype='uint8'),
-                  np.zeros((batch_size,), dtype='bool'),
-                  np.zeros((batch_size,), dtype='float16'))
+        target = ReplayMemory(1, 1, 1, batch_size)
 
         values = {}
         count = 0
         num_batches = 0
         for i in range(100):
-            rp2.sample_memories(*target, batch_size=batch_size)
+            rp2.sample_memories(target, batch_size=batch_size)
 
             for i in range(batch_size):
-                val = target[1][i]
+                val = target[i]['action']
 
                 if val not in values:
                     values[val] = 0

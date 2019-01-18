@@ -11,7 +11,8 @@ parser.add_argument('-m', '--model-save-prefix', dest='model_save_prefix', defau
 parser.add_argument('-i', '--interval', dest='interval', type=int, default=50)
 parser.add_argument('-e', '--use-epsilon', dest='use_epsilon', action='store_true', default=False)
 parser.add_argument('--ng', '--num-games', dest='num_games', type=int, default=1)
-parser.add_argument('--display', dest='no_display', action='store_false', default=True)
+parser.add_argument('--display', dest='display', action='store_true', default=False)
+parser.add_argument('--save', dest='save_video', action='store_true', default=False)
 parser.add_argument('--dir', '--save-dir', dest='save_dir', default='./models')
 
 
@@ -40,4 +41,5 @@ qn = net_cl(args.game_id,
 qn.play(use_epsilon=args.use_epsilon, 
         interval=args.interval, 
         num_games=args.num_games, 
-        no_display=args.no_display)
+        display=args.display,
+        save_video=args.save_video)
