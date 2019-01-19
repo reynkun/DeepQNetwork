@@ -134,7 +134,13 @@ class ReplayMemoryDisk:
         if self.cur_idx == self.max_size - 1:
             self.is_full = True
 
-        self.cur_idx = (self.cur_idx + 1) % self.max_size
+        self.increment_idx()
+
+
+    def extend(self, target):
+        for i in range(len(target)):
+            target.copy(i, self, self.cur_idx)
+            self.increment_idx()
 
 
     def set(self, idx, state=None, action=None, reward=None, next_state=None, cont=None, loss=None):
@@ -158,6 +164,14 @@ class ReplayMemoryDisk:
                 del self.cache_map[idx]
                 del self.cache_map_rev[cache_idx]
 
+            self.cache_row(idx,
+                           state=state,
+                           action=action,
+                           reward=reward,
+                           next_state=next_state,
+                           cont=cont,
+                           loss=loss)
+
 
     def get(self, idx):
         if self.cache:
@@ -169,29 +183,16 @@ class ReplayMemoryDisk:
         row = self.get_row(idx)
 
         if self.cache:
-            # cache_cur_idx = self.cache.cur_idx
-            # self.cache_map[idx] = cache_cur_idx
-            # self.cache.append(**row)
-            #
-            # old_idx = self.cache_map_rev.get(cache_cur_idx, None)
-            # if old_idx is not None:
-            #     del self.cache_map[old_idx]
-            #
-            # self.cache_map_rev[cache_cur_idx] = idx
-
-            self.cache_row(idx, row)
+            self.cache_row(idx, **row)
 
         return row
 
 
     def copy(self, idx, target, target_idx):
         if self.cache:
-
             cache_idx = self.cache_map.get(idx, None)
 
             if cache_idx is not None:
-
-                # print('using cache', cache_idx)
                 target.states[target_idx] = self.cache.states[cache_idx]
                 target.actions[target_idx] = self.cache.actions[cache_idx]
                 target.rewards[target_idx] = self.cache.rewards[cache_idx]
@@ -209,8 +210,7 @@ class ReplayMemoryDisk:
         target.continues[target_idx] = self.continues[idx]
         target.losses[target_idx] = self.losses[idx]
 
-        # print(idx, target_idx, target.states[target_idx])
-        #
+
         if self.cache:
             row = self.get_row(idx)
             self.cache_row(idx, row)
@@ -230,16 +230,26 @@ class ReplayMemoryDisk:
             'loss': self.losses[idx]
         }
 
-    def cache_row(self, idx, row):
+
+    def cache_row(self, idx, state=None, action=None, reward=None, next_state=None, cont=None, loss=None):
         cache_cur_idx = self.cache.cur_idx
         self.cache_map[idx] = cache_cur_idx
-        self.cache.append(**row)
+        self.cache.append(state=state,
+                          action=action,
+                          reward=reward,
+                          next_state=next_state,
+                          cont=cont,
+                          loss=loss)
 
         old_idx = self.cache_map_rev.get(cache_cur_idx, None)
         if old_idx is not None:
             del self.cache_map[old_idx]
 
         self.cache_map_rev[cache_cur_idx] = idx
+
+
+    def increment_idx(self):
+        self.cur_idx = (self.cur_idx + 1) % self.max_size
 
 
     def __getitem__(self, idx):

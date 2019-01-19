@@ -107,14 +107,26 @@ class GameAgent:
         #                                   axis=1,
         #                                   keepdims=True)
 
-        self.double_max_q_values = tf.reduce_sum(self.target_q_values * tf.one_hot(self.online_actions,
-                                                                                   self.num_outputs,
-                                                                                   dtype=tf.float32),
-                                                 axis=1)
-        self.max_q_values = tf.reduce_sum(self.target_q_values * tf.one_hot(self.target_actions,
-                                                                            self.num_outputs,
-                                                                            dtype=tf.float32),
-                                          axis=1)
+        # self.double_max_q_values = tf.reduce_sum(self.target_q_values * tf.one_hot(self.online_actions,
+        #                                                                            self.num_outputs,
+        #                                                                            dtype=tf.float32),
+        #                                          axis=1)
+        # self.max_q_values = tf.reduce_sum(self.target_q_values * tf.one_hot(self.target_actions,
+        #                                                                     self.num_outputs,
+        #                                                                     dtype=tf.float32),
+        #                                   axis=1)
+
+        self.double_max_q_values = tf.reduce_max(self.target_q_values, axis=1)
+        self.max_q_values = tf.reduce_max(self.target_q_values, axis=1)
+
+        # q_values = self.sess.model.online_q_values.eval(feed_dict={self.sess.model.X_state: [next_state]})
+        # total_max_q += q_values.max()
+        #
+        # if is_training or use_epsilon:
+        #     action = self.epsilon_greedy(q_values,
+        #                                  step)
+        # else:
+        #     action = np.argmax(q_values)
 
         copy_ops = []
         for var_name, target_var in target_vars.items():

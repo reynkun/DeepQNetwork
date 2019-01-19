@@ -44,7 +44,14 @@ class ReplayMemory:
         if self.cur_idx == self.max_size - 1:
             self.is_full = True
 
-        self.cur_idx = (self.cur_idx + 1) % self.max_size
+        self.increment_idx()
+        # self.cur_idx = (self.cur_idx + 1) % self.max_size
+
+
+    def extend(self, target):
+        for i in range(len(target)):
+            target.copy(i, self, self.cur_idx)
+            self.increment_idx()
 
 
     def get(self, idx):
@@ -80,6 +87,10 @@ class ReplayMemory:
         target.next_states[target_idx] = self.next_states[idx]
         target.continues[target_idx] = self.continues[idx]
         target.losses[target_idx] = self.losses[idx]
+
+
+    def increment_idx(self):
+        self.cur_idx = (self.cur_idx + 1) % self.max_size
 
 
     def __getitem__(self, idx):

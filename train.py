@@ -37,9 +37,6 @@ net_cl = getattr(mod_net, cl_net_str)
 mod_ag = importlib.import_module(mod_agent_str)
 ag_cl = getattr(mod_ag, cl_agent_str)
 
-print('args.game_id', args.game_id)
-print('args.save_prefix', args.model_save_prefix)
-
 options = {}
 options.update(vars(args))
 

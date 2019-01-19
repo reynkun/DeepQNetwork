@@ -13,6 +13,15 @@ from rl.data.replay_sampler import ReplaySampler
 
 
 class TestData(test_base.TestBase):
+    def check_row(self, rp, i, val):
+        self.assertEqual(rp[i]['state'][0], val)
+        self.assertEqual(rp[i]['action'], val)
+        self.assertEqual(rp[i]['reward'], val)
+        self.assertEqual(rp[i]['next_state'][0], val)
+        self.assertEqual(rp[i]['cont'], val > 0)
+        self.assertAlmostEqual(rp[i]['loss'], val * 0.01, places=3)
+
+
     def test_replay_memory_disk_append(self):
         data_fn = os.path.join(self.get_data_dir(), 'replay_test.hdf5')
 
@@ -187,15 +196,19 @@ class TestData(test_base.TestBase):
         i = 1
         rp.append(np.array([[[i]]]), i, i, np.array([[[i]]]), i, i * 0.01)
         self.assertEqual(rp[1]['action'], 1)
+        self.assertEqual(rp[0]['action'], 0)
 
         i = 2
         rp.append(np.array([[[i]]]), i, i, np.array([[[i]]]), i, i * 0.01)
+        self.assertEqual(rp[1]['action'], 1)
 
         i = 3
         rp.append(np.array([[[i]]]), i, i, np.array([[[i]]]), i, i * 0.01)
 
-        self.assertEqual(rp[0]['action'], 2)
-        self.assertEqual(rp[1]['action'], 3)
+        self.check_row(rp, 0, 2)
+        self.check_row(rp, 1, 3)
+        # self.assertEqual(rp[0]['action'], 2)
+        # self.assertEqual(rp[1]['action'], 3)
 
 
     def test_replay_memory_disk_sample_1(self):
@@ -346,6 +359,38 @@ class TestData(test_base.TestBase):
 
         for i in range(2):
             rp.append(np.array([[[i]]]), i, i, np.array([[[i]]]), i, i * 0.01)
+
+
+    def test_replay_memory_extend_1(self):
+        rp = ReplayMemory(1,
+                          1,
+                          1,
+                          max_size=2)
+
+
+        for i in range(2):
+            rp.append(np.array([[[i]]]), i, i, np.array([[[i]]]), i, i * 0.01)
+
+        rp2 = ReplayMemory(1,
+                          1,
+                          1,
+                          max_size=3)
+
+        for i in range(3):
+            rp.append(np.array([[[(i+5)]]]), (i+5), (i+5), np.array([[[(i+5)]]]), (i+5), (i+5) * 0.01)
+
+        rp.extend(rp2)
+
+        self.assertEqual(rp[0]['state'][0][0][0], 7)
+        self.assertEqual(rp[0]['action'], 7)
+        self.assertEqual(rp[0]['reward'], 7)
+        self.assertEqual(rp[0]['next_state'][0][0][0], 7)
+        self.assertAlmostEqual(rp[0]['loss'], 0.07, places=2)
+        self.assertEqual(rp[0]['action'], 7)
+
+        self.assertEqual(rp[1]['action'], 6)
+
+        self.assertEqual(len(rp), 2)
 
 
     def test_sum_tree_empty(self):

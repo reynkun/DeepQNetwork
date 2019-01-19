@@ -1,15 +1,13 @@
-import math
 import re
 import os
 import time
-import random
-import datetime
 import multiprocessing
 import pickle
-import signal
 import json
+import logging
 
 from collections import deque
+from logging.handlers import TimedRotatingFileHandler
 
 import gym
 import tensorflow as tf
@@ -19,7 +17,6 @@ from .game.render import render_game
 from .data.replay_memory_disk import ReplayMemoryDisk
 from .data.replay_memory import ReplayMemory
 from .data.replay_sampler import ReplaySampler
-from .data.sum_tree import SumTree
 
 
 def time_string():
@@ -79,8 +76,6 @@ class DeepQNetwork:
         if os.path.exists(path):
             with open(path) as fin:
                 self.options = json.load(fin)
-                self.log(json.dumps(self.options, sort_keys=True, indent=4))
-                self.log('options loaded from:', path)
         else:
             self.options = DEFAULT_OPTIONS
 
@@ -95,12 +90,15 @@ class DeepQNetwork:
                 self.options[key] = value
 
         # now write final options
-        with open(path, 'w+') as fo:
-            self.log(json.dumps(self.options, sort_keys=True, indent=4))
-            self.log('saving options to:', path)
+        if not os.path.exists(path):
+            with open(path, 'w+') as fo:
+                # self.log(json.dumps(self.options, sort_keys=True, indent=4))
+                # self.log('saving options to:', path)
 
-            json.dump(self.options, fo, sort_keys=True, indent=4)
+                json.dump(self.options, fo, sort_keys=True, indent=4)
 
+        self.init_logging()
+        self.log(json.dumps(self.options, sort_keys=True, indent=4))
 
         self.model_class = model_class
         self.game_id = game_id
@@ -153,6 +151,8 @@ class DeepQNetwork:
         start_time = time.time()
 
         with self.get_session(load_model=True, save_model=True, env=env) as sess:
+            self.sess = sess
+
             save_steps = 10000
             copy_steps = 10000
             train_report_interval = self.options['train_report_interval']
@@ -162,42 +162,14 @@ class DeepQNetwork:
             report_last_step = step
             total_losses = []
 
+            # training batch
             batch = ReplayMemory(sess.model.input_height,
                                  sess.model.input_width,
                                  sess.model.input_channels,
                                  max_size=self.batch_size,
                                  state_type=sess.model.state_type)
 
-            # states = np.zeros((self.batch_size,
-            #                    sess.model.input_height,
-            #                    sess.model.input_width,
-            #                    sess.model.input_channels), dtype=sess.model.state_type)
-            # actions = np.zeros((self.batch_size,), dtype='uint8')
-            # rewards = np.zeros((self.batch_size,), dtype='uint8')
-            # next_states = np.zeros((self.batch_size,
-            #                         sess.model.input_height,
-            #                         sess.model.input_width,
-            #                         sess.model.input_channels), dtype=sess.model.state_type)
-            # continues = np.zeros((self.batch_size,), dtype='bool')
-            # losses = np.zeros((self.batch_size,), dtype='float16')
-
-            # replay_batch = (np.zeros((self.batch_size,
-            #                           sess.model.input_height,
-            #                           sess.model.input_width,
-            #                           sess.model.input_channels), dtype='uint8'),
-            #                 np.zeros((self.batch_size,), dtype='uint8'),
-            #                 np.zeros((self.batch_size,), dtype='uint8'),
-            #                 np.zeros((self.batch_size,
-            #                           sess.model.input_height,
-            #                           sess.model.input_width,
-            #                           sess.model.input_channels), dtype='uint8'),
-            #                 np.zeros((self.batch_size,), dtype='bool'),
-            #                 np.zeros((self.batch_size,), dtype='float16'))
-
-
             # allocate memory
-
-
             if self.options['use_memory']:
                 memories = ReplayMemory(sess.model.input_height,
                                         sess.model.input_width,
@@ -217,7 +189,6 @@ class DeepQNetwork:
 
 
             if self.options['use_priority']:
-
                 self.replay_memory = ReplaySampler(memories)
             else:
 
@@ -227,7 +198,7 @@ class DeepQNetwork:
             replay_memory_size = len(self.replay_memory)
 
 
-            run_step = self.run_game(sess, is_training=True)
+            run_step = self.run_game(is_training=True)
 
 
             while len(self.replay_memory) < self.num_game_frames_before_training:
@@ -253,8 +224,7 @@ class DeepQNetwork:
                         self.replay_memory.sample_memories(batch,
                                                            batch_size=self.batch_size)
 
-                    target_max_q_values = self.get_target_max_q_values(sess,
-                                                                       batch.rewards,
+                    target_max_q_values = self.get_target_max_q_values(batch.rewards,
                                                                        batch.continues,
                                                                        batch.next_states)
 
@@ -304,7 +274,7 @@ class DeepQNetwork:
 
                         total_losses = []
 
-                        self.log('step {} avg loss: {:0.5f} mem: {:d} fr: {:0.1f}'.format(step,
+                        self.log('[train] step {} avg loss: {:0.5f} mem: {:d} fr: {:0.1f}'.format(step,
                                                                                                       avg_loss,
                                                                                                       replay_memory_size,
                                                                                                       frame_rate))
@@ -323,8 +293,23 @@ class DeepQNetwork:
         self.log('train finished in {:0.1f} seconds / {:0.1f} mins'.format(elapsed, elapsed / 60))
 
 
+    def play(self, num_games=1, use_epsilon=False, interval=60, display=False, save_video=False):
+        env = gym.make(self.game_id)
+        env.seed(int(time.time()))
+
+        with self.get_session(load_model=True, save_model=False, env=env) as sess:
+            self.sess = sess
+
+            for _ in self.run_game(is_training=False,
+                                   num_games=num_games,
+                                   use_epsilon=use_epsilon,
+                                   interval=interval,
+                                   display=display,
+                                   save_video=save_video):
+                pass
+
+
     def run_game(self,
-                 sess,
                  is_training=False,
                  num_games=None,
                  use_epsilon=False,
@@ -346,17 +331,17 @@ class DeepQNetwork:
         report_start_time = time.time()
         report_last_iteration = 0
         report_rate = 0
-        step = sess.run([sess.model.step])[0]
+        step = self.sess.run([self.sess.model.step])[0]
         num_episodes = 0
 
-        batch = ReplayMemory(sess.model.input_height,
-                             sess.model.input_width,
-                             sess.model.input_channels,
+        batch = ReplayMemory(self.sess.model.input_height,
+                             self.sess.model.input_width,
+                             self.sess.model.input_channels,
                              max_size=self.batch_size,
-                             state_type=sess.model.state_type)
+                             state_type=self.sess.model.state_type)
 
         if is_training and self.game_count.value <= 0:
-            self.game_count.value = sess.run([sess.model.game_count])[0]
+            self.game_count.value = self.sess.run([self.sess.model.game_count])[0]
             self.log('game_count:', self.game_count.value)
 
         try:
@@ -366,7 +351,7 @@ class DeepQNetwork:
                 total_max_q = 0.0
                 game_length = 0
                 game_score = 0
-                state_frames = deque(maxlen=sess.model.input_channels)
+                state_frames = deque(maxlen=self.sess.model.input_channels)
                 action = 0
                 reward = None
                 info = None
@@ -387,7 +372,7 @@ class DeepQNetwork:
 
                 obs = env.reset()
 
-                obs = sess.model.preprocess_observation(obs)
+                obs = self.sess.model.preprocess_observation(obs)
                 state_frames.append(obs)
 
                 while not game_done:
@@ -403,9 +388,9 @@ class DeepQNetwork:
                             self.log('game too long, breaking')
                             break
 
-                        step = sess.run([sess.model.step])[0]
+                        step = self.sess.run([self.sess.model.step])[0]
 
-                        if len(state_frames) >= sess.model.input_channels:
+                        if len(state_frames) >= self.sess.model.input_channels:
                             next_state = self.make_state(state_frames)
 
                             if is_training and state is not None:
@@ -416,13 +401,11 @@ class DeepQNetwork:
                                              next_state=next_state)
 
                                 if len(batch) >= self.batch_size:
-                                    target_max_q_values = self.get_target_max_q_values(sess,
-                                                                                       batch.rewards,
+                                    target_max_q_values = self.get_target_max_q_values(batch.rewards,
                                                                                        batch.continues,
                                                                                        batch.next_states)
 
-                                    losses = self.get_losses(sess,
-                                                             batch.states,
+                                    losses = self.get_losses(batch.states,
                                                              batch.actions,
                                                              target_max_q_values)
 
@@ -441,7 +424,7 @@ class DeepQNetwork:
                             state = next_state
 
                             # Online DQN evaluates what to do
-                            q_values = sess.model.online_q_values.eval(feed_dict={sess.model.X_state: [next_state]})
+                            q_values = self.sess.model.online_q_values.eval(feed_dict={self.sess.model.X_state: [next_state]})
                             total_max_q += q_values.max()
 
                             if is_training or use_epsilon:
@@ -450,7 +433,7 @@ class DeepQNetwork:
                             else:
                                 action = np.argmax(q_values)
 
-                        action = sess.model.before_action(action, obs, reward, game_done, info)
+                        action = self.sess.model.before_action(action, obs, reward, game_done, info)
 
                         # run action for frame_skip steps
                         reward = 0
@@ -460,7 +443,7 @@ class DeepQNetwork:
 
                             if not is_training:
                                 actions.append(action)
-                                game_frames.append(sess.model.render_obs(obs))
+                                game_frames.append(self.sess.model.render_obs(obs))
 
                             reward += step_reward
 
@@ -478,7 +461,7 @@ class DeepQNetwork:
 
                         game_score += reward
 
-                        obs = sess.model.preprocess_observation(obs)
+                        obs = self.sess.model.preprocess_observation(obs)
                         state_frames.append(obs)
 
                     num_episodes += 1
@@ -508,13 +491,11 @@ class DeepQNetwork:
                                      next_state=next_state)
 
                         if len(batch) >= self.batch_size:
-                            target_max_q_values = self.get_target_max_q_values(sess,
-                                                                               batch.rewards,
+                            target_max_q_values = self.get_target_max_q_values(batch.rewards,
                                                                                batch.continues,
                                                                                batch.next_states)
 
-                            losses = self.get_losses(sess,
-                                                     batch.states,
+                            losses = self.get_losses(batch.states,
                                                      batch.actions,
                                                      target_max_q_values)
 
@@ -568,8 +549,8 @@ class DeepQNetwork:
                 else:
                     mem_len = 0
 
-                if self.game_count.value % sess.model.game_report_interval == 0 or not is_training:
-                    self.log('step {} game {} epi {} len: {:d} max_q: {:0.3f}/{:0.3f} score: {:0.1f} avg: {:0.2f} mem: {:d} eps: {:0.3f} fr: {:0.1f}/{:0.1f}'.format(
+                if self.game_count.value % self.sess.model.game_report_interval == 0 or not is_training:
+                    self.log('[play] step {} game {} epi {} len: {:d} max_q: {:0.3f}/{:0.3f} score: {:0.1f} avg: {:0.2f} mem: {:d} eps: {:0.3f} fr: {:0.1f}/{:0.1f}'.format(
                                step,
                                self.game_count.value,
                                num_episodes,
@@ -605,22 +586,6 @@ class DeepQNetwork:
         env.close()
 
 
-
-    def play(self, num_games=1, use_epsilon=False, interval=60, display=False, save_video=False):
-        env = gym.make(self.game_id)
-        env.seed(int(time.time()))
-
-        with self.get_session(load_model=True, save_model=False, env=env) as sess:
-            for _ in self.run_game(sess,
-                                   is_training=False,
-                                   num_games=num_games,
-                                   use_epsilon=use_epsilon,
-                                   interval=interval,
-                                   display=display,
-                                   save_video=save_video):
-                pass
-
-
     def epsilon(self, step):
         return max(self.eps_min, self.eps_max - (self.eps_max-self.eps_min) * step/self.eps_decay_steps)
 
@@ -653,29 +618,42 @@ class DeepQNetwork:
         return cols
 
 
-    def get_target_max_q_values(self, sess, rewards, continues, next_states):
+    def add_replays_to_memory(self, batch):
+        target_max_q_values = self.get_target_max_q_values(batch.rewards,
+                                                           batch.continues,
+                                                           batch.next_states)
+
+        losses = self.get_losses(batch.states,
+                                 batch.actions,
+                                 target_max_q_values)
+
+        for i in range(len(batch)):
+            self.replay_memory.append(state=batch.states[i],
+                                      action=batch.actions[i],
+                                      reward=batch.rewards[i],
+                                      next_state=batch.next_states[i],
+                                      cont=1,
+                                      loss=losses[i])
+        batch.clear()
+
+
+    def get_target_max_q_values(self, rewards, continues, next_states):
         if self.options['use_double']:
-            max_next_q_values = sess.model.double_max_q_values.eval(
-                feed_dict={sess.model.X_state: next_states})
+            max_next_q_values = self.sess.model.double_max_q_values.eval(
+                feed_dict={self.sess.model.X_state: next_states})
         else:
-            # next_q_values = sess.model.target_q_values.eval(
-            #     feed_dict={sess.model.X_state: next_states})
-            # max_next_q_values = np.max(next_q_values, axis=1, keepdims=True)
-
-            max_next_q_values = sess.model.max_q_values.eval(
-                feed_dict={sess.model.X_state: next_states})
+            max_next_q_values = self.sess.model.max_q_values.eval(
+                feed_dict={self.sess.model.X_state: next_states})
 
 
-
-        # print(rewards, continues, self.discount_rate, max_next_q_values)
         return rewards + continues * self.discount_rate * max_next_q_values
 
 
-    def get_losses(self, sess, states, actions, max_q_values):
-        return sess.model.losses.eval(feed_dict={
-                                        sess.model.X_state: states,
-                                        sess.model.X_action: actions,
-                                        sess.model.y: max_q_values
+    def get_losses(self, states, actions, max_q_values):
+        return self.sess.model.losses.eval(feed_dict={
+                                        self.sess.model.X_state: states,
+                                        self.sess.model.X_action: actions,
+                                        self.sess.model.y: max_q_values
                                       })
 
 
@@ -749,7 +727,6 @@ class DeepQNetwork:
             pass
         except FileNotFoundError:
             self.log('file missing:', memory_fn, 'skipping')
-
 
 
     def get_session(parent, load_model=True, save_model=False, env=None):
@@ -827,6 +804,29 @@ class DeepQNetwork:
         return Session(env)
 
 
+    def init_logging(self, add_std_err=True):
+        LOG_FORMAT = '%(asctime).19s [%(levelname)s] %(message)s'
+
+        self.logger = logging.getLogger('rl')
+        self.logger.setLevel(logging.DEBUG)
+
+        logPath = os.path.join(self.options['save_dir'], '%s.log' % self.file_prefix)
+
+        hdlr = TimedRotatingFileHandler(logPath, when='D')
+        formatter = logging.Formatter(LOG_FORMAT)
+        hdlr.setFormatter(formatter)
+
+        self.logger.addHandler(hdlr)
+
+        if add_std_err:
+            hdlr = logging.StreamHandler()
+            hdlr.setFormatter(formatter)
+            self.logger.addHandler(hdlr)
+
+        return self.logger
+
+
     def log(self, *mesg):
-        # print(time_string(), self.header, ' '.join(mesg))
-        print('{} [{}] {}'.format(time_string(), self.header, ' '.join([str(m) for m in mesg])))
+        self.logger.info(' '.join([str(m) for m in mesg]))
+        # # print(time_string(), self.header, ' '.join(mesg))
+        # print('{} [{}] {}'.format(time_string(), self.header, ' '.join([str(m) for m in mesg])))
