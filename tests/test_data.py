@@ -47,6 +47,7 @@ class TestData(test_base.TestBase):
             self.assertEqual(row['cont'], i)
             self.assertAlmostEqual(row['loss'], i * 0.01, places=3)
 
+
     def test_replay_memory_disk_copy(self):
         data_fn = os.path.join(self.get_data_dir(), 'replay_test.hdf5')
 
@@ -317,6 +318,38 @@ class TestData(test_base.TestBase):
 
         self.assertEqual(len(values), num_values)
 
+    def test_replay_memory_disk_extend_1(self):
+        data_fn = os.path.join(self.get_data_dir(), 'replay_test.hdf5')
+
+        if os.path.exists(data_fn):
+            os.unlink(data_fn)
+
+        rp = ReplayMemoryDisk(data_fn,
+                              1,
+                              1,
+                              1,
+                              max_size=2,
+                              cache_size=0)
+
+        rp2 = ReplayMemoryDisk(data_fn,
+                              1,
+                              1,
+                              1,
+                              max_size=3,
+                              cache_size=0)
+
+        for i in range(3):
+            rp2.append(np.array([[[i]]]), i, i, np.array([[[i]]]), i, i * 0.01)
+
+        rp.extend(rp2)
+
+        self.assertEqual(len(rp), 2)
+        self.assertEqual(rp[0]['action'], 2)
+        self.assertAlmostEqual(float(rp[0]['loss']), 0.02, places=3)
+        self.assertEqual(rp[1]['action'], 1)
+        self.assertAlmostEqual(float(rp[1]['loss']), 0.01, places=3)
+        self.assertEqual(len(rp), 2)
+
 
     def test_replay_memory_1(self):
         rp = ReplayMemory(1,
@@ -347,6 +380,9 @@ class TestData(test_base.TestBase):
             self.assertEqual(rp[i]['next_state'], val)
             self.assertEqual(rp[i]['cont'], val>0)
             self.assertAlmostEqual(rp[i]['loss'], val * 0.01, places=3)
+
+        self.assertEqual(len(rp), 2)
+        self.assertEqual(rp.is_full, True)
 
 
     def test_replay_memory_2(self):
@@ -389,7 +425,6 @@ class TestData(test_base.TestBase):
         self.assertEqual(rp[0]['action'], 7)
 
         self.assertEqual(rp[1]['action'], 6)
-
         self.assertEqual(len(rp), 2)
 
 

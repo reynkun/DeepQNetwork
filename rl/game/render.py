@@ -69,7 +69,7 @@ def render_cart_pole(obs):
     return np.array(img)
 
 
-def render_game(game_frames, actions, render_func=None, repeat=True, interval=300, save_path=None, no_display=False):
+def render_game(game_frames, actions, render_func=None, repeat=True, interval=300, save_path=None, display=False):
     def update_scene(num, frames, patch):
         patch.set_data(frames[num])
         return patch,
@@ -107,7 +107,7 @@ def render_game(game_frames, actions, render_func=None, repeat=True, interval=30
     if save_path is not None:
         video.save(save_path)
 
-    if not no_display:
+    if display:
         plt.show()
 
     return video

@@ -131,9 +131,6 @@ class ReplayMemoryDisk:
                  cont=cont,
                  loss=loss)
 
-        if self.cur_idx == self.max_size - 1:
-            self.is_full = True
-
         self.increment_idx()
 
 
@@ -249,6 +246,8 @@ class ReplayMemoryDisk:
 
 
     def increment_idx(self):
+        if self.cur_idx + 1 >= self.max_size:
+            self.is_full = True
         self.cur_idx = (self.cur_idx + 1) % self.max_size
 
 

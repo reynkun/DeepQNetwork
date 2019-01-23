@@ -8,6 +8,7 @@ parser.add_argument('-n', '--network', dest='network', default='rl.deep_q_networ
 parser.add_argument('-g', '--game-id', dest='game_id', default='BreakoutDeterministic-v4')
 parser.add_argument('-m', '--model-save-prefix', dest='model_save_prefix', default=None)
 parser.add_argument('-O', '--dir', '--save-dir', dest='save_dir', default='./data')
+parser.add_argument('--encoder-save-path', dest='encoder_save_path', default='./data/')
 
 # arch options
 parser.add_argument('--double', dest='use_double', action='store_true')

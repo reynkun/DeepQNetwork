@@ -36,7 +36,7 @@ DEFAULT_OPTIONS = {
     'testing_train': False,
     'testing_weights': False,
     'model_save_prefix': None,
-    'replay_max_memory_length': 2000000,
+    'replay_max_memory_length': 1000000,
     'replay_cache_size': 300000,
     'max_num_training_steps': 20000000,
     'num_game_frames_before_training': 10000,
@@ -50,8 +50,9 @@ DEFAULT_OPTIONS = {
     'use_priority': True,
     'use_momentum': False,
     'use_memory': False,
+    'use_encoder': False,
     'frame_skip': 4,
-    'tf_log_level': 3
+    'tf_log_level': 3,
 }
 
 
@@ -146,9 +147,8 @@ class DeepQNetwork:
         env = gym.make(self.game_id)
         env.seed(int(time.time()))
 
-        self.delete_old_memories()
-
         start_time = time.time()
+
 
         with self.get_session(load_model=True, save_model=True, env=env) as sess:
             self.sess = sess
@@ -176,26 +176,26 @@ class DeepQNetwork:
                                         sess.model.input_channels,
                                         state_type=sess.model.state_type,
                                         max_size=self.replay_max_memory_length)
+
+                if os.path.exists(self.get_replay_memory_path()):
+                    self.log('loading old memories from', self.get_replay_memory_path())
+                    old_memories = ReplayMemoryDisk(self.get_replay_memory_path())
+                    self.log('found', len(old_memories))
+                    memories.extend(old_memories)
             else:
-                memories = ReplayMemoryDisk(os.path.join(self.options['save_dir'],
-                                                               '{}_replay_memory.hdf5'.format(
-                                                                       self.options['model_save_prefix'])),
-                                                  sess.model.input_height,
-                                                  sess.model.input_width,
-                                                  sess.model.input_channels,
-                                                  state_type=sess.model.state_type,
-                                                  max_size=self.replay_max_memory_length,
-                                                  cache_size=self.options['replay_cache_size'])
+                memories = ReplayMemoryDisk(self.get_replay_memory_path(),
+                                            sess.model.input_height,
+                                            sess.model.input_width,
+                                            sess.model.input_channels,
+                                            state_type=sess.model.state_type,
+                                            max_size=self.replay_max_memory_length,
+                                            cache_size=self.options['replay_cache_size'])
 
 
             if self.options['use_priority']:
                 self.replay_memory = ReplaySampler(memories)
             else:
-
                 self.replay_memory = memories
-
-
-            replay_memory_size = len(self.replay_memory)
 
 
             run_step = self.run_game(is_training=True)
@@ -211,18 +211,30 @@ class DeepQNetwork:
                 while step < self.max_num_training_steps:
                     step = sess.model.step.eval()
 
-                    for i in range(self.options['num_game_steps_per_train']):
+
+                    if step % 100000 == 0:
+                        self.log('saving video at step', step)
+                        for _ in self.run_game(is_training=False,
+                                               num_games=1,
+                                               use_epsilon=False,
+                                               interval=60,
+                                               display=False,
+                                               save_video=True):
+                            pass
+
+
+                    for _ in range(self.options['num_game_steps_per_train']):
                         next(run_step)
 
                     # sample memories and use the target DQN to produce the target Q-Value
                     if self.options['use_priority']:
                         tree_idxes = []
                         self.replay_memory.sample_memories(batch,
-                                                           batch_size=self.batch_size,
-                                                           tree_idxes=tree_idxes)
+                                                            batch_size=self.batch_size,
+                                                            tree_idxes=tree_idxes)
                     else:
                         self.replay_memory.sample_memories(batch,
-                                                           batch_size=self.batch_size)
+                                                            batch_size=self.batch_size)
 
                     target_max_q_values = self.get_target_max_q_values(batch.rewards,
                                                                        batch.continues,
@@ -275,22 +287,40 @@ class DeepQNetwork:
                         total_losses = []
 
                         self.log('[train] step {} avg loss: {:0.5f} mem: {:d} fr: {:0.1f}'.format(step,
-                                                                                                      avg_loss,
-                                                                                                      replay_memory_size,
-                                                                                                      frame_rate))
-                            
-            except KeyboardInterrupt:
-                self.log('interrupted')
+                                                                                                  avg_loss,
+                                                                                                  len(self.replay_memory),
+                                                                                                  frame_rate))
+
+            except (KeyboardInterrupt, StopIteration):
+                self.log('train interrupted')
+
+            self.log('closing replay memory')
+
+            if self.options['use_memory']:
+                self.log('saving', len(memories), 'memories to disk')
+                old_memories = ReplayMemoryDisk(self.get_replay_memory_path(),
+                                                self.sess.model.input_height,
+                                                self.sess.model.input_width,
+                                                self.sess.model.input_channels,
+                                                state_type=sess.model.state_type,
+                                                max_size=self.replay_max_memory_length,
+                                                cache_size=self.options['replay_cache_size'])
+
+                old_memories.extend(memories)
+                old_memories.close()
+
+                self.log('saved memory to disk')
+            else:
+                self.replay_memory.close()
 
             sess.model.game_count.load(self.game_count.value)
+
 
         env.close()
 
         elapsed = time.time() - start_time 
 
-        self.log('closing replay memory')
-        self.replay_memory.close()
-        self.log('train finished in {:0.1f} seconds / {:0.1f} mins'.format(elapsed, elapsed / 60))
+        self.log('train finished in {:0.1f} seconds / {:0.1f} mins / {:0.1} hours'.format(elapsed, elapsed / 60, elapsed / 60 / 60))
 
 
     def play(self, num_games=1, use_epsilon=False, interval=60, display=False, save_video=False):
@@ -351,7 +381,7 @@ class DeepQNetwork:
                 total_max_q = 0.0
                 game_length = 0
                 game_score = 0
-                state_frames = deque(maxlen=self.sess.model.input_channels)
+                state_frames = deque(maxlen=self.sess.model.num_frame_per_state)
                 action = 0
                 reward = None
                 info = None
@@ -390,10 +420,12 @@ class DeepQNetwork:
 
                         step = self.sess.run([self.sess.model.step])[0]
 
-                        if len(state_frames) >= self.sess.model.input_channels:
+                        if len(state_frames) >= self.sess.model.num_frame_per_state:
                             next_state = self.make_state(state_frames)
 
                             if is_training and state is not None:
+                                # print('append state:', state.shape)
+
                                 batch.append(state=state,
                                              action=action,
                                              reward=reward,
@@ -424,6 +456,7 @@ class DeepQNetwork:
                             state = next_state
 
                             # Online DQN evaluates what to do
+                            # print('next_state:', next_state.shape)
                             q_values = self.sess.model.online_q_values.eval(feed_dict={self.sess.model.X_state: [next_state]})
                             total_max_q += q_values.max()
 
@@ -469,21 +502,7 @@ class DeepQNetwork:
                     # game / episode done, save last step
                     next_state = self.make_state(state_frames)
 
-                    if is_training:
-                        # batch.set(0,
-                        #           state=state,
-                        #           action=action,
-                        #           reward=reward,
-                        #           cont=0,
-                        #           next_state=next_state)
-                        #
-                        # self.replay_memory.append(batch.states[0],
-                        #                           batch.actions[0],
-                        #                           batch.rewards[0],
-                        #                           batch.next_states[0],
-                        #                           0,
-                        #                           losses[0])
-
+                    if is_training and state is not None:
                         batch.append(state=state,
                                      action=action,
                                      reward=reward,
@@ -564,7 +583,7 @@ class DeepQNetwork:
                                frame_rate,
                                report_rate))
 
-                if not is_training and display:
+                if not is_training:
                     if save_video:
                         save_path = os.path.join(self.save_dir,
                                                  'video-{}-{}.mp4'.format(step,
@@ -576,11 +595,12 @@ class DeepQNetwork:
                                 actions,
                                 repeat=False,
                                 interval=interval,
-                                save_path=save_path)
+                                save_path=save_path,
+                                display=display)
 
 
         except KeyboardInterrupt:
-            self.log('run game interrupted')
+            self.log('play interrupted')
 
 
         env.close()
@@ -599,42 +619,8 @@ class DeepQNetwork:
 
 
     def make_state(self, frames):
+        # print('make_state -->', frames[0].shape, '-->', np.concatenate(frames, axis=2).shape)
         return np.concatenate(frames, axis=2)
-
-
-    def make_batch(self, memories):
-        cols = [[], [], [], [], [], []] # state, action, reward, next_state, continue
-
-        for memory in memories:
-            try:
-                for col, value in zip(cols, memory):
-                    col.append(value)
-            except TypeError as e:
-                self.log('TypeError: ', str(e), type(memory))
-                pass
-
-        cols = [np.array(col) for col in cols]
-
-        return cols
-
-
-    def add_replays_to_memory(self, batch):
-        target_max_q_values = self.get_target_max_q_values(batch.rewards,
-                                                           batch.continues,
-                                                           batch.next_states)
-
-        losses = self.get_losses(batch.states,
-                                 batch.actions,
-                                 target_max_q_values)
-
-        for i in range(len(batch)):
-            self.replay_memory.append(state=batch.states[i],
-                                      action=batch.actions[i],
-                                      reward=batch.rewards[i],
-                                      next_state=batch.next_states[i],
-                                      cont=1,
-                                      loss=losses[i])
-        batch.clear()
 
 
     def get_target_max_q_values(self, rewards, continues, next_states):
@@ -655,78 +641,6 @@ class DeepQNetwork:
                                         self.sess.model.X_action: actions,
                                         self.sess.model.y: max_q_values
                                       })
-
-
-    def get_memory_file_list(self):
-        fns = []
-        for fn in os.listdir(self.save_dir):
-            match = re.match(self.memory_file_prefix + '-(\\d+)-(\\d+)', fn)
-            if not match:
-                continue
-            path = os.path.join(self.save_dir, fn)
-            with open(path, 'rb') as fin:
-                size = pickle.load(fin)
-
-            fns.append((path, int(match.group(1)), int(size)))
-
-        return fns
-
-
-    def delete_old_memories(self):
-        fns = self.get_memory_file_list()
-
-        for path, date, size in sorted(fns, key=lambda x: x[1]):
-            self.log('deleting old memory: {}'.format(path))
-            os.unlink(path)
-
-
-    def get_memory_save_path(self):
-        # now save
-        path = os.path.join(self.save_dir, '{}-{:d}'.format(self.memory_file_prefix, int(time.time())))
-        i = 0
-        new_path = path + '-{:d}'.format(i)
-        while os.path.exists(new_path):
-            i += 1
-
-            if i > 100:
-                raise Exception('cannot find new save path')
-
-            new_path = path + '-{:d}'.format(i)
-
-        return new_path
-
-
-    def load_memory(self, memory_fn, delete=True):
-        try:
-            self.log('loading memory from:', memory_fn)
-
-            # with open(memory_fn, 'rb') as fin:
-            #     size = pickle.load(fin)
-            #
-            #     for i in range(size):
-            #         # self.add_memory(*pickle.load(fin))
-            #         # row = pickle.load(fin)
-            #         # print(row)
-            #         # self.replay_memory.append(*row)
-            #         self.replay_memory.append(*pickle.load(fin))
-            #
-
-            memories = ReplayMemoryDisk(memory_fn,
-                                        cache_size=0)
-
-            for i in range(len(memories)):
-                self.replay_memory.append(*memories[i])
-
-            self.log('load complete. loaded:', len(memories), 'total:', len(self.replay_memory))
-
-            if delete:
-                os.unlink(memory_fn)
-
-        except EOFError:
-            self.log('eoferror')
-            pass
-        except FileNotFoundError:
-            self.log('file missing:', memory_fn, 'skipping')
 
 
     def get_session(parent, load_model=True, save_model=False, env=None):
@@ -830,3 +744,9 @@ class DeepQNetwork:
         self.logger.info(' '.join([str(m) for m in mesg]))
         # # print(time_string(), self.header, ' '.join(mesg))
         # print('{} [{}] {}'.format(time_string(), self.header, ' '.join([str(m) for m in mesg])))
+
+
+    def get_replay_memory_path(self):
+        return os.path.join(self.options['save_dir'],
+                            '{}_replay_memory.hdf5'.format(
+                                self.options['model_save_prefix']))

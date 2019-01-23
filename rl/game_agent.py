@@ -4,8 +4,9 @@ from collections import deque
 import numpy as np
 import tensorflow as tf
 
-
 from PIL import Image, ImageDraw
+
+from rl.autoencoder.autoencoder import AutoEncoder
 
 
 class GameAgent:
@@ -13,7 +14,9 @@ class GameAgent:
     input_height = 2
     input_width = 2
     input_channels = 4
+    num_frame_per_state = 4
     use_conv = False
+    use_encoder = False
     state_type = 'uint8'
 
 
@@ -27,7 +30,6 @@ class GameAgent:
 
         if initialize:
             self.make_model()
-
 
 
     def best_action(self, X_states, sess=None, use_target=False):
@@ -63,18 +65,17 @@ class GameAgent:
         else:
             q_values = self.online_q_values
 
-        values = sess.run([q_values], 
-                          feed_dict={self.model.X_state: self.convert_state(X_next_state_val)})
+        values = sess.run([q_values],
+                          feed_dict={self.model.X_state: X_states})
 
         return values
 
 
     def make_model(self):
         # set placeholders
-        # print('input_channels:', self.input_channels)
         self.X_action = tf.placeholder(tf.uint8, shape=[None], name='action')
+
         # target Q
-        # self.y = tf.placeholder(tf.float32, shape=[None, 1])
         self.y = tf.placeholder(tf.float32, shape=[None], name='max_q_values')
 
         # save how many games we've played
@@ -100,13 +101,6 @@ class GameAgent:
         self.online_q_values, self.online_actions, online_vars = self.make_q_network(last, name='q_networks/online')
         self.target_q_values, self.target_actions, target_vars = self.make_q_network(last, name='q_networks/target')
 
-        # self.double_max_q_values = tf.reduce_sum(self.target_q_values * tf.one_hot(self.online_actions, self.num_outputs, dtype=tf.float32),
-        #                                          axis=1,
-        #                                          keepdims=True)
-        # self.max_q_values = tf.reduce_sum(self.target_q_values * tf.one_hot(self.X_action, self.num_outputs, dtype=tf.float32),
-        #                                   axis=1,
-        #                                   keepdims=True)
-
         # self.double_max_q_values = tf.reduce_sum(self.target_q_values * tf.one_hot(self.online_actions,
         #                                                                            self.num_outputs,
         #                                                                            dtype=tf.float32),
@@ -119,14 +113,6 @@ class GameAgent:
         self.double_max_q_values = tf.reduce_max(self.target_q_values, axis=1)
         self.max_q_values = tf.reduce_max(self.target_q_values, axis=1)
 
-        # q_values = self.sess.model.online_q_values.eval(feed_dict={self.sess.model.X_state: [next_state]})
-        # total_max_q += q_values.max()
-        #
-        # if is_training or use_epsilon:
-        #     action = self.epsilon_greedy(q_values,
-        #                                  step)
-        # else:
-        #     action = np.argmax(q_values)
 
         copy_ops = []
         for var_name, target_var in target_vars.items():
@@ -152,10 +138,16 @@ class GameAgent:
             conv_paddings = ['same'] * 3
             conv_activations = [tf.nn.relu] * 3
             num_hidden = 512
-
+        elif self.use_encoder:
+            conv_num_maps = [64, 64]
+            conv_kernel_sizes = [4, 4]
+            conv_strides = [2, 1]
+            conv_paddings = ['same'] * len(conv_num_maps)
+            conv_activations = [tf.nn.relu] * len(conv_num_maps)
+            num_hidden = 512
 
         with tf.variable_scope(name) as scope:
-            if self.use_conv:
+            if self.use_conv or self.use_encoder:
                 # conv layers
                 for num_maps, kernel_size, stride, padding, act_func in zip(conv_num_maps,
                                                                             conv_kernel_sizes,
@@ -288,6 +280,34 @@ class BreakoutAgent(GameAgent):
             self.num_lives = info['ale.lives']        
 
         return action
+
+
+class BreakoutAgentEncoded(BreakoutAgent):
+    input_height = 23
+    input_width = 20
+    input_channels = 16
+    use_conv = False
+    use_encoder = True
+    compress_ratio = 2
+    game_report_interval = 10
+    num_lives = 0
+
+
+    def __init__(self, env, initialize=True, options=None):
+        super().__init__(env, initialize=initialize, options=options)
+
+        self.encoder = AutoEncoder({
+            'save_dir': options['save_dir']
+        })
+
+
+    def preprocess_observation(self, img):
+        img = img[16:-16:self.compress_ratio, ::self.compress_ratio]  # crop and downsize
+        img = np.dot(img[..., :3], [0.299, 0.587, 0.144])
+
+        return self.encoder.encode([img.astype('uint8').reshape(89, 80, 1)])[0]
+
+        # return img
 
 
 class CartPoleAgent(GameAgent):
