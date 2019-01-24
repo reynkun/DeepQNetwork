@@ -14,13 +14,13 @@ parser.add_argument('--encoder-save-path', dest='encoder_save_path', default='./
 parser.add_argument('--double', dest='use_double', action='store_true')
 parser.add_argument('--dueling', '--dueling', dest='use_dueling', action='store_true')
 parser.add_argument('--priority', dest='use_priority', action='store_true')
-parser.add_argument('--train-backward', '--ntb', dest='train_backward', action='store_false')
 parser.add_argument('--frame-skip', '--fs', dest='frame_skip', type=int)
 
 # train options
 parser.add_argument('--max-train', dest='max_num_training_steps', type=int)
 parser.add_argument('--eps', '--eps-steps', dest='eps_decay_steps', type=int)
 parser.add_argument('--mss', '--mem-save-size', dest='mem_save_size', type=int)
+parser.add_argument('--svs', '--save-video-steps', dest='num_train_steps_save_video', type=int)
 parser.add_argument('--fbt', '--frames-before-training', dest='num_game_frames_before_training', type=int)
 parser.add_argument('--rs', '--replay-size', dest='replay_max_memory_length', type=int)
 parser.add_argument('--use-memory', dest='use_memory', action='store_true')

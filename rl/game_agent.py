@@ -81,7 +81,14 @@ class GameAgent:
         # save how many games we've played
         self.game_count = tf.Variable(0, trainable=False, name='game_count')
 
-        if self.use_conv:
+        if self.use_encoder:
+            print('using encoder for state')
+            self.X_state = tf.placeholder(tf.float32, shape=[None,
+                                                             self.input_height,
+                                                             self.input_width,
+                                                             self.input_channels])
+            last = self.X_state
+        elif self.use_conv:
             self.X_state = tf.placeholder(tf.uint8, shape=[None, 
                                                            self.input_height,
                                                            self.input_width,

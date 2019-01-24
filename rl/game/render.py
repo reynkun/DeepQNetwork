@@ -94,9 +94,6 @@ def render_game(game_frames, actions, render_func=None, repeat=True, interval=30
     patch = plt.imshow(frames[0])
     plt.axis('on')
 
-    print('interval:', interval)
-
-
     video = animation.FuncAnimation(fig, 
                                     update_scene, 
                                     fargs=(frames, patch), 
@@ -104,11 +101,12 @@ def render_game(game_frames, actions, render_func=None, repeat=True, interval=30
                                     repeat=repeat, 
                                     interval=interval)
 
-    if save_path is not None:
-        video.save(save_path)
 
     if display:
         plt.show()
+
+    if save_path is not None:
+        video.save(save_path)
 
     return video
 

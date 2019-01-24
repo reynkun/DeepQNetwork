@@ -38,20 +38,20 @@ DEFAULT_OPTIONS = {
     'model_save_prefix': None,
     'replay_max_memory_length': 1000000,
     'replay_cache_size': 300000,
-    'max_num_training_steps': 20000000,
+    'max_num_training_steps': 2000000,
     'num_game_frames_before_training': 10000,
     'num_game_steps_per_train': 4,
+    'num_train_steps_save_video': None,
     'game_report_interval': 10,
     'train_report_interval': 100,
     'game_render_interval': 20000,
     'use_episodes': True,
     'use_dueling': False,
     'use_double': False,
-    'use_priority': True,
+    'use_priority': False,
     'use_momentum': False,
     'use_memory': False,
-    'use_encoder': False,
-    'frame_skip': 4,
+    'frame_skip': 1,
     'tf_log_level': 3,
 }
 
@@ -149,7 +149,6 @@ class DeepQNetwork:
 
         start_time = time.time()
 
-
         with self.get_session(load_model=True, save_model=True, env=env) as sess:
             self.sess = sess
 
@@ -212,7 +211,7 @@ class DeepQNetwork:
                     step = sess.model.step.eval()
 
 
-                    if step % 100000 == 0:
+                    if self.options['num_train_steps_save_video'] is not None and step % self.options['num_train_steps_save_video'] == 0:
                         self.log('saving video at step', step)
                         for _ in self.run_game(is_training=False,
                                                num_games=1,
@@ -304,7 +303,7 @@ class DeepQNetwork:
                                                 self.sess.model.input_channels,
                                                 state_type=sess.model.state_type,
                                                 max_size=self.replay_max_memory_length,
-                                                cache_size=self.options['replay_cache_size'])
+                                                cache_size=0)
 
                 old_memories.extend(memories)
                 old_memories.close()
@@ -373,6 +372,8 @@ class DeepQNetwork:
         if is_training and self.game_count.value <= 0:
             self.game_count.value = self.sess.run([self.sess.model.game_count])[0]
             self.log('game_count:', self.game_count.value)
+        else:
+            game_count = 0
 
         try:
             while True:
@@ -390,15 +391,16 @@ class DeepQNetwork:
                 num_lives = 0
 
                 # for not training only
-                if not is_training:
+                if is_training:
+                    self.game_count.value += 1
+                else:
                     actions = []
                     game_frames = []
 
-                if not is_training:
-                    if self.game_count.value >= num_games:
+                    if game_count >= num_games:
                         break
 
-                self.game_count.value += 1
+                    game_count += 1
 
                 obs = env.reset()
 
@@ -424,8 +426,6 @@ class DeepQNetwork:
                             next_state = self.make_state(state_frames)
 
                             if is_training and state is not None:
-                                # print('append state:', state.shape)
-
                                 batch.append(state=state,
                                              action=action,
                                              reward=reward,
@@ -474,7 +474,7 @@ class DeepQNetwork:
                             # Online DQN plays
                             obs, step_reward, game_done, info = env.step(action)
 
-                            if not is_training:
+                            if not is_training and (save_video or display):
                                 actions.append(action)
                                 game_frames.append(self.sess.model.render_obs(obs))
 
@@ -531,7 +531,6 @@ class DeepQNetwork:
                         yield
 
                     state = next_state
-
 
                 if game_length > 0:
                     mean_max_q = total_max_q / game_length
@@ -591,12 +590,13 @@ class DeepQNetwork:
                     else:
                         save_path = None
 
-                    render_game(game_frames,
-                                actions,
-                                repeat=False,
-                                interval=interval,
-                                save_path=save_path,
-                                display=display)
+                    if save_video or display:
+                        render_game(game_frames,
+                                    actions,
+                                    repeat=False,
+                                    interval=interval,
+                                    save_path=save_path,
+                                    display=display)
 
 
         except KeyboardInterrupt:

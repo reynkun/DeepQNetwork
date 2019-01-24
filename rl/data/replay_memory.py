@@ -1,4 +1,5 @@
 import numpy as np
+import random
 
 
 class ReplayMemory:
@@ -90,6 +91,29 @@ class ReplayMemory:
         if self.cur_idx + 1 >= self.max_size:
             self.is_full = True
         self.cur_idx = (self.cur_idx + 1) % self.max_size
+
+
+    def sample_memories(self, target, batch_size=32):
+        size = len(self) / batch_size
+
+        # print(len(self), batch_size, size)
+
+        for i in range(batch_size):
+            # print(batch_size, i, size, i*size, (i+1)*size - 1)
+            idx = random.randint(int(i*size), int((i+1)*size - 1))
+
+            self.copy(idx, target, i)
+
+            # print(i * size, (i + 1) * size, idx)
+        # for i in range(batch_size):
+        #     idx = random.randint(0, len(self) - 1)
+        #     while idx in idxs and dup_count < batch_size * 3:
+        #         idx = random.randint(0, len(self) - 1)
+        #         dup_count += 1
+        #         continue
+        #
+        #     idxs[idx] = True
+        #     self.copy(idx, target, i)
 
 
     def __getitem__(self, idx):

@@ -161,13 +161,13 @@ class ReplayMemoryDisk:
                 del self.cache_map[idx]
                 del self.cache_map_rev[cache_idx]
 
-            self.cache_row(idx,
-                           state=state,
-                           action=action,
-                           reward=reward,
-                           next_state=next_state,
-                           cont=cont,
-                           loss=loss)
+            # self.cache_row(idx,
+            #                state=state,
+            #                action=action,
+            #                reward=reward,
+            #                next_state=next_state,
+            #                cont=cont,
+            #                loss=loss)
 
 
     def get(self, idx):
