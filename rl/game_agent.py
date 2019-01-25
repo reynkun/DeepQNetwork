@@ -6,11 +6,13 @@ import tensorflow as tf
 
 from PIL import Image, ImageDraw
 
-from rl.autoencoder.autoencoder import AutoEncoder
-
 
 class GameAgent:
-    skip_steps = 0
+    DEFAULT_OPTIONS = {
+        'learning_rate': 0.00025,
+        'momentum': 0.95
+    }
+
     input_height = 2
     input_width = 2
     input_channels = 4
@@ -23,10 +25,12 @@ class GameAgent:
     def __init__(self, env, initialize=True, options=None):
         self.num_outputs = env.action_space.n
 
-        if options:
-            self.options = options
-        else:
-            self.options = {}
+        self.options = self.DEFAULT_OPTIONS.copy()
+
+        if options is not None:
+            for key, value in options.items():
+                if key not in self.options:
+                    self.options[key] = value
 
         if initialize:
             self.make_model()
@@ -218,20 +222,10 @@ class GameAgent:
 
 
     def make_train(self):
-        learning_rate = 0.00025
-        momentum = 0.95
-
-        # print('learning rate: {:0.3f}, momentum: {:0.3f}'.format(learning_rate, momentum))
-
         with tf.variable_scope("train"):
             self.online_max_q_values = tf.reduce_sum(self.online_q_values * tf.one_hot(self.X_action, self.num_outputs, dtype=tf.float32),
                                           axis=1,
                                           keepdims=True)
-            # print(self.y.shape, self.online_q_values.shape, self.online_max_q_values.shape)
-
-            # self.losses = tf.losses.huber_loss(self.y,
-            #                                    self.online_max_q_values,
-            #                                    reduction=tf.losses.Reduction.NONE)
             self.losses = tf.losses.huber_loss(tf.reshape(self.y, [-1, 1]),
                                                self.online_max_q_values,
                                                reduction=tf.losses.Reduction.NONE)
@@ -242,11 +236,11 @@ class GameAgent:
                                     name='step')
 
             if self.options['use_momentum']:
-                optimizer = tf.train.MomentumOptimizer(learning_rate,
-                                                       momentum,
+                optimizer = tf.train.MomentumOptimizer(self.options['learning_rate'],
+                                                       self.options['momentum'],
                                                        use_nesterov=True)
             else:
-                optimizer = tf.train.AdamOptimizer(learning_rate)
+                optimizer = tf.train.AdamOptimizer(self.options['learning_rate'])
 
             self.training_op = optimizer.minimize(self.loss, 
                                                   global_step=self.step)
@@ -287,34 +281,6 @@ class BreakoutAgent(GameAgent):
             self.num_lives = info['ale.lives']        
 
         return action
-
-
-class BreakoutAgentEncoded(BreakoutAgent):
-    input_height = 23
-    input_width = 20
-    input_channels = 16
-    use_conv = False
-    use_encoder = True
-    compress_ratio = 2
-    game_report_interval = 10
-    num_lives = 0
-
-
-    def __init__(self, env, initialize=True, options=None):
-        super().__init__(env, initialize=initialize, options=options)
-
-        self.encoder = AutoEncoder({
-            'save_dir': options['save_dir']
-        })
-
-
-    def preprocess_observation(self, img):
-        img = img[16:-16:self.compress_ratio, ::self.compress_ratio]  # crop and downsize
-        img = np.dot(img[..., :3], [0.299, 0.587, 0.144])
-
-        return self.encoder.encode([img.astype('uint8').reshape(89, 80, 1)])[0]
-
-        # return img
 
 
 class CartPoleAgent(GameAgent):

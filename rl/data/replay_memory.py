@@ -3,7 +3,16 @@ import random
 
 
 class ReplayMemory:
-    def __init__(self, input_height, input_width, input_channels, max_size=10000, state_type='uint8'):
+    MAX_SIZE = 10000
+    STATE_TYPE = 'uint8'
+
+
+    def __init__(self,
+                 input_height,
+                 input_width,
+                 input_channels,
+                 max_size=MAX_SIZE,
+                 state_type=STATE_TYPE):
         self.cur_idx = 0
         self.is_full = False
         self.max_size = max_size
@@ -43,7 +52,6 @@ class ReplayMemory:
                  loss=loss)
 
         self.increment_idx()
-        # self.cur_idx = (self.cur_idx + 1) % self.max_size
 
 
     def extend(self, target):
@@ -96,24 +104,10 @@ class ReplayMemory:
     def sample_memories(self, target, batch_size=32):
         size = len(self) / batch_size
 
-        # print(len(self), batch_size, size)
-
         for i in range(batch_size):
-            # print(batch_size, i, size, i*size, (i+1)*size - 1)
             idx = random.randint(int(i*size), int((i+1)*size - 1))
 
             self.copy(idx, target, i)
-
-            # print(i * size, (i + 1) * size, idx)
-        # for i in range(batch_size):
-        #     idx = random.randint(0, len(self) - 1)
-        #     while idx in idxs and dup_count < batch_size * 3:
-        #         idx = random.randint(0, len(self) - 1)
-        #         dup_count += 1
-        #         continue
-        #
-        #     idxs[idx] = True
-        #     self.copy(idx, target, i)
 
 
     def __getitem__(self, idx):
