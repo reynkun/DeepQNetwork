@@ -101,15 +101,6 @@ class ReplayMemory:
         self.cur_idx = (self.cur_idx + 1) % self.max_size
 
 
-    def sample_memories(self, target, batch_size=32):
-        size = len(self) / batch_size
-
-        for i in range(batch_size):
-            idx = random.randint(int(i*size), int((i+1)*size - 1))
-
-            self.copy(idx, target, i)
-
-
     def __getitem__(self, idx):
         if isinstance(idx, int):
             return self.get(idx)

@@ -15,6 +15,9 @@ from .game.render import render_game
 from .data.replay_memory_disk import ReplayMemoryDisk
 from .data.replay_memory import ReplayMemory
 from .data.replay_sampler import ReplaySampler
+from .data.replay_sampler_priority import ReplaySamplerPriority
+
+
 
 
 def time_string():
@@ -40,7 +43,6 @@ class DeepQNetwork:
         'num_train_steps_save_video': None,
         'game_report_interval': 10,
         'train_report_interval': 100,
-        'game_render_interval': 20000,
         'use_episodes': True,
         'use_dueling': False,
         'use_double': False,
@@ -53,15 +55,15 @@ class DeepQNetwork:
     }
 
 
-    def __init__(self, options, initialize=False):
-        self.save_dir = options['save_dir']
+    def __init__(self, conf, initialize=False):
+        self.save_dir = conf['save_dir']
 
         if initialize:
             # create save dir
             if not os.path.exists(self.save_dir):
                 os.mkdir(self.save_dir)
 
-            self.options = self.DEFAULT_OPTIONS.copy()
+            self.conf = self.DEFAULT_OPTIONS.copy()
         else:
 
             # go find conf file
@@ -69,254 +71,265 @@ class DeepQNetwork:
             for fn in os.listdir(self.save_dir):
                 if fn.endswith('.conf'):
                     with open(os.path.join(self.save_dir, fn)) as fin:
-                        self.options = json.load(fin)
+                        self.conf = json.load(fin)
                         has_conf = True
                         break
 
             if not has_conf:
                 raise Exception('no conf file found')
 
-        # override saved options with parameters
-        if options is not None:
-            for key, value in options.items():
+        # override saved conf with parameters
+        if conf is not None:
+            for key, value in conf.items():
                 if value is not None:
-                    self.options[key] = value
+                    self.conf[key] = value
 
-        file_prefix = self.options['game_id']
+        file_prefix = self.conf['game_id']
         self.save_path_prefix = os.path.join(self.save_dir, file_prefix)
 
         if initialize:
-            # now write final options
+            # now write final conf
             conf_path = self.save_path_prefix + '.conf'
             if not os.path.exists(conf_path):
                 with open(conf_path, 'w+') as fo:
-                    json.dump(self.options, fo, sort_keys=True, indent=4)
+                    json.dump(self.conf, fo, sort_keys=True, indent=4)
 
         # init logging
-        if self.options.get('use_log', True):
+        if self.conf.get('use_log', True):
             self.init_logging()
             self.use_log = True
         else:
             self.use_log = False
 
-        for key, value in self.options.items():
-            self.log('{}: {}'.format(key, value))
+        self.log('config values:')
+        for key, value in self.conf.items():
+            self.log('  {}: {}'.format(key, value))
 
         # make agent
-        mod_agent_str, cl_agent_str = self.options['agent'].rsplit('.', 1)
+        mod_agent_str, cl_agent_str = self.conf['agent'].rsplit('.', 1)
         mod_ag = importlib.import_module(mod_agent_str)
 
         self.agent_class = getattr(mod_ag, cl_agent_str)
 
-        os.environ['TF_CPP_MIN_LOG_LEVEL'] = str(self.options['tf_log_level'])
+        os.environ['TF_CPP_MIN_LOG_LEVEL'] = str(self.conf['tf_log_level'])
 
 
         # set variables from settings for convenience
-        self.game_id = self.options['game_id']
+        self.game_id = self.conf['game_id']
 
         # run game settings
-        self.eps_min = self.options['eps_min']
-        self.eps_max = self.options['eps_max']
-        self.eps_decay_steps = self.options['eps_decay_steps']
-        self.discount_rate = self.options['discount_rate']
-        self.use_episodes = self.options['use_episodes']
-        self.frame_skip = self.options['frame_skip']
+        self.eps_min = self.conf['eps_min']
+        self.eps_max = self.conf['eps_max']
+        self.eps_decay_steps = self.conf['eps_decay_steps']
+        self.discount_rate = self.conf['discount_rate']
+        self.use_episodes = self.conf['use_episodes']
+        self.frame_skip = self.conf['frame_skip']
 
         # train settings
-        self.max_num_training_steps = self.options['max_num_training_steps']
-        self.replay_max_memory_length = self.options['replay_max_memory_length']
-        self.num_game_frames_before_training = self.options['num_game_frames_before_training']
-        self.batch_size = self.options['batch_size']
-        self.game_render_interval = self.options['game_render_interval']
+        self.max_num_training_steps = self.conf['max_num_training_steps']
+        self.replay_max_memory_length = self.conf['replay_max_memory_length']
+        self.num_game_frames_before_training = self.conf['num_game_frames_before_training']
+        self.batch_size = self.conf['batch_size']
+        self.save_steps = self.conf['save_model_steps']
+        self.copy_steps = self.conf['copy_network_steps']
 
 
     def train(self):
         '''
-        Runs train
+        Runs training loop
         '''
-
-        self.env = gym.make(self.game_id)
-        self.env.seed(int(time.time()))
 
         start_time = time.time()
 
+        self.log('train start')
+
+        with self.get_session(init_env=True,
+                              init_model=True,
+                              load_model=True,
+                              save_model=True) as self.sess:
+            self._init_train()
+            self._train_loop()
+            self._finish_train()
+
+        elapsed = time.time() - start_time 
+
+        self.log('train finished in {:0.1f} seconds / {:0.1f} mins / {:0.1f} hours'.format(elapsed, elapsed / 60, elapsed / 60 / 60))
+
+
+    def _init_train(self):
         self.game_count = 0
+        self.train_report_interval = self.conf['train_report_interval']
+        self.report_start_time = time.time()
+        self.step = self.sess.model.step.eval()
+        self.report_last_step = self.step
+        self.total_losses = []
 
-        with self.get_session(init_model=True, load_model=True, save_model=True) as self.sess:
-            save_steps = self.options['save_model_steps']
-            copy_steps = self.options['copy_network_steps']
-            train_report_interval = self.options['train_report_interval']
+        # training batch
+        self.batch = ReplayMemory(self.sess.model.input_height,
+                                  self.sess.model.input_width,
+                                  self.sess.model.input_channels,
+                                  max_size=self.batch_size,
+                                  state_type=self.sess.model.state_type)
 
-            report_start_time = time.time()
-            step = self.sess.model.step.eval()
-            report_last_step = step
-            total_losses = []
+        # allocate memory
+        if self.conf['use_memory']:
+            self.memories = ReplayMemory(self.sess.model.input_height,
+                                         self.sess.model.input_width,
+                                         self.sess.model.input_channels,
+                                         state_type=self.sess.model.state_type,
+                                         max_size=self.replay_max_memory_length)
 
-            # training batch
-            batch = ReplayMemory(self.sess.model.input_height,
-                                 self.sess.model.input_width,
-                                 self.sess.model.input_channels,
-                                 max_size=self.batch_size,
-                                 state_type=self.sess.model.state_type)
+            if os.path.exists(self.get_replay_memory_path()):
+                self.log('loading old memories from', self.get_replay_memory_path())
+                old_memories = ReplayMemoryDisk(self.get_replay_memory_path())
+                self.log('found', len(old_memories))
+                self.memories.extend(old_memories)
+        else:
+            self.memories = ReplayMemoryDisk(self.get_replay_memory_path(),
+                                             self.sess.model.input_height,
+                                             self.sess.model.input_width,
+                                             self.sess.model.input_channels,
+                                             state_type=self.sess.model.state_type,
+                                             max_size=self.replay_max_memory_length,
+                                             cache_size=self.conf['replay_cache_size'])
 
-            # allocate memory
-            if self.options['use_memory']:
-                memories = ReplayMemory(self.sess.model.input_height,
-                                        self.sess.model.input_width,
-                                        self.sess.model.input_channels,
-                                        state_type=self.sess.model.state_type,
-                                        max_size=self.replay_max_memory_length)
+        # initialize memory sampler
+        if self.conf['use_priority']:
+            self.replay_sampler = ReplaySamplerPriority(self.memories)
+        else:
+            self.replay_sampler = ReplaySampler(self.memories)
 
-                if os.path.exists(self.get_replay_memory_path()):
-                    self.log('loading old memories from', self.get_replay_memory_path())
-                    old_memories = ReplayMemoryDisk(self.get_replay_memory_path())
-                    self.log('found', len(old_memories))
-                    memories.extend(old_memories)
+        # initialize run_game step generator
+        self.run_step = self.run_game(is_training=True)
+
+
+        # fill replay memory when first starting training
+        while len(self.replay_sampler) < self.num_game_frames_before_training:
+            next(self.run_step)
+
+
+    def _train_loop(self):
+        try:
+            self.log('start training')
+
+            while self.step < self.max_num_training_steps:
+                self._train_step()
+        except (KeyboardInterrupt, StopIteration):
+            self.log('train interrupted')
+
+
+    def _train_step(self):
+        self.step = self.sess.model.step.eval()
+
+        # run game steps
+        for _ in range(self.conf['num_game_steps_per_train']):
+            next(self.run_step)
+
+        # sample memories and use the target DQN to produce the target Q-Value
+        if self.conf['use_priority']:
+            tree_idxes = []
+            self.replay_sampler.sample_memories(self.batch,
+                                                batch_size=self.batch_size,
+                                                tree_idxes=tree_idxes)
+        else:
+            self.replay_sampler.sample_memories(self.batch,
+                                                batch_size=self.batch_size)
+
+        target_max_q_values = self.get_target_max_q_values(self.batch.rewards,
+                                                           self.batch.continues,
+                                                           self.batch.next_states)
+
+        # Train the online DQN
+        tr_res, new_losses, loss_val = self.sess.run([self.sess.model.training_op,
+                                                      self.sess.model.losses,
+                                                      self.sess.model.loss],
+                                                     feed_dict={
+                                                         self.sess.model.X_state: self.batch.states,
+                                                         self.sess.model.X_action: self.batch.actions,
+                                                         self.sess.model.y: target_max_q_values
+                                                     })
+
+        if self.conf['use_priority']:
+            self.replay_sampler.update_sum_tree(tree_idxes, new_losses)
+
+        self.total_losses.append(loss_val)
+
+        # Regularly copy the online DQN to the target DQN
+        if self.step % self.copy_steps == 0:
+            self.log('copying online to target dqn')
+            self.sess.model.copy_online_to_target.run()
+
+        # And save regularly
+        if self.step % self.save_steps == 0:
+            self.sess.model.game_count.load(self.game_count)
+            self.sess.save(self.save_path_prefix)
+
+        # save video every so often
+        if self.conf['num_train_steps_save_video'] is not None and \
+                self.step % self.conf['num_train_steps_save_video'] == 0:
+
+            self.log('saving video at step', self.step)
+            for _ in self.run_game(is_training=False,
+                                   num_games=1,
+                                   use_epsilon=False,
+                                   interval=60,
+                                   display=False,
+                                   save_video=True):
+                pass
+
+        # report
+        if self.step % self.train_report_interval == 0:
+            elapsed = time.time() - self.report_start_time
+            if elapsed > 0:
+                frame_rate = (self.step - self.report_last_step) / elapsed
             else:
-                memories = ReplayMemoryDisk(self.get_replay_memory_path(),
+                frame_rate = 0.0
+
+            self.report_last_step = self.step
+            self.report_start_time = time.time()
+
+            if len(self.total_losses) > 0:
+                avg_loss = sum(self.total_losses) / len(self.total_losses)
+            else:
+                avg_loss = 0
+
+            self.total_losses.clear()
+
+            self.log('[train] step {} avg loss: {:0.5f} mem: {:d} fr: {:0.1f}'.format(self.step,
+                                                                                      avg_loss,
+                                                                                      len(self.replay_sampler),
+                                                                                      frame_rate))
+
+
+    def _finish_train(self):
+        self.log('closing replay memory')
+
+        if self.conf['use_memory']:
+            self.log('saving', len(self.memories), 'memories to disk')
+            old_memories = ReplayMemoryDisk(self.get_replay_memory_path(),
                                             self.sess.model.input_height,
                                             self.sess.model.input_width,
                                             self.sess.model.input_channels,
                                             state_type=self.sess.model.state_type,
                                             max_size=self.replay_max_memory_length,
-                                            cache_size=self.options['replay_cache_size'])
+                                            cache_size=0)
 
+            old_memories.extend(self.memories)
+            old_memories.close()
 
-            if self.options['use_priority']:
-                self.replay_memory = ReplaySampler(memories)
-            else:
-                self.replay_memory = memories
+            self.log('saved memory to disk')
+        else:
+            self.replay_sampler.close()
 
-
-            run_step = self.run_game(is_training=True)
-
-
-            while len(self.replay_memory) < self.num_game_frames_before_training:
-                next(run_step)
-
-
-            try:
-                self.log('start training')
-
-                while step < self.max_num_training_steps:
-                    step = self.sess.model.step.eval()
-
-                    # save video every so often
-                    if self.options['num_train_steps_save_video'] is not None and step % self.options['num_train_steps_save_video'] == 0:
-                        self.log('saving video at step', step)
-                        for _ in self.run_game(is_training=False,
-                                               num_games=1,
-                                               use_epsilon=False,
-                                               interval=60,
-                                               display=False,
-                                               save_video=True):
-                            pass
-
-
-                    # run game steps
-                    for _ in range(self.options['num_game_steps_per_train']):
-                        next(run_step)
-
-                    # sample memories and use the target DQN to produce the target Q-Value
-                    if self.options['use_priority']:
-                        tree_idxes = []
-                        self.replay_memory.sample_memories(batch,
-                                                            batch_size=self.batch_size,
-                                                            tree_idxes=tree_idxes)
-                    else:
-                        self.replay_memory.sample_memories(batch,
-                                                            batch_size=self.batch_size)
-
-                    target_max_q_values = self.get_target_max_q_values(batch.rewards,
-                                                                       batch.continues,
-                                                                       batch.next_states)
-
-                    # Train the online DQN
-                    tr_res, new_losses, loss_val = self.sess.run([self.sess.model.training_op,
-                                                                  self.sess.model.losses,
-                                                                  self.sess.model.loss],
-                                                                 feed_dict={
-                                                                     self.sess.model.X_state: batch.states,
-                                                                     self.sess.model.X_action: batch.actions,
-                                                                     self.sess.model.y: target_max_q_values
-                                                                 })
-
-                    if self.options['use_priority']:
-                        self.replay_memory.update_sum_tree(tree_idxes, new_losses)
-
-                    total_losses.append(loss_val)
-
-                    # Regularly copy the online DQN to the target DQN
-                    if step % copy_steps == 0:
-                        self.log('copying online to target dqn')
-                        self.sess.model.copy_online_to_target.run()
-
-
-                    # And save regularly
-                    if step % save_steps == 0:
-                        self.sess.model.game_count.load(self.game_count)
-                        self.sess.save(self.save_path_prefix)
-
-                    # report 
-                    if step % train_report_interval == 0:
-                        elapsed = time.time() - report_start_time
-                        if elapsed > 0:
-                            frame_rate = (step - report_last_step) / elapsed
-                        else:
-                            frame_rate = 0.0
-
-                        report_last_step = step
-                        report_start_time = time.time()
-
-                        if len(total_losses) > 0:
-                            avg_loss = sum(total_losses) / len(total_losses)
-                        else:
-                            avg_loss = 0
-
-                        total_losses = []
-
-                        self.log('[train] step {} avg loss: {:0.5f} mem: {:d} fr: {:0.1f}'.format(step,
-                                                                                                  avg_loss,
-                                                                                                  len(self.replay_memory),
-                                                                                                  frame_rate))
-
-            except (KeyboardInterrupt, StopIteration):
-                self.log('train interrupted')
-
-            self.log('closing replay memory')
-
-            if self.options['use_memory']:
-                self.log('saving', len(memories), 'memories to disk')
-                old_memories = ReplayMemoryDisk(self.get_replay_memory_path(),
-                                                self.sess.model.input_height,
-                                                self.sess.model.input_width,
-                                                self.sess.model.input_channels,
-                                                state_type=self.sess.model.state_type,
-                                                max_size=self.replay_max_memory_length,
-                                                cache_size=0)
-
-                old_memories.extend(memories)
-                old_memories.close()
-
-                self.log('saved memory to disk')
-            else:
-                self.replay_memory.close()
-
-            sess.model.game_count.load(self.game_count)
-
-
-        self.env.close()
-
-        elapsed = time.time() - start_time 
-
-        self.log('train finished in {:0.1f} seconds / {:0.1f} mins / {:0.1} hours'.format(elapsed, elapsed / 60, elapsed / 60 / 60))
+        # save game count
+        self.sess.model.game_count.load(self.game_count)
 
 
     def play(self, num_games=1, use_epsilon=False, interval=60, display=False, save_video=False):
-        self.env = gym.make(self.game_id)
-        self.env.seed(int(time.time()))
-
-        with self.get_session(init_model=False, load_model=True, save_model=False) as self.sess:
+        with self.get_session(init_env=True,
+                              init_model=False,
+                              load_model=True,
+                              save_model=False) as self.sess:
             for _ in self.run_game(is_training=False,
                                    num_games=num_games,
                                    use_epsilon=use_epsilon,
@@ -333,8 +346,6 @@ class DeepQNetwork:
                  interval=60,
                  display=False,
                  save_video=False):
-        self.log('run_game_func')
-
         game_scores = deque(maxlen=1000)
         max_qs = deque(maxlen=1000)
         report_interval = 60
@@ -386,9 +397,9 @@ class DeepQNetwork:
 
                     game_count += 1
 
-                obs = self.env.reset()
-
+                obs = self.sess.env.reset()
                 obs = self.sess.model.preprocess_observation(obs)
+
                 state_frames.append(obs)
 
                 while not game_done:
@@ -426,7 +437,7 @@ class DeepQNetwork:
                                                              target_max_q_values)
 
                                     for i in range(len(batch)):
-                                        self.replay_memory.append(state=batch.states[i],
+                                        self.replay_sampler.append(state=batch.states[i],
                                                                   action=batch.actions[i],
                                                                   reward=batch.rewards[i],
                                                                   next_state=batch.next_states[i],
@@ -456,7 +467,7 @@ class DeepQNetwork:
                         reward = 0
                         for i in range(self.frame_skip):
                             # Online DQN plays
-                            obs, step_reward, game_done, info = self.env.step(action)
+                            obs, step_reward, game_done, info = self.sess.env.step(action)
 
                             if not is_training and (save_video or display):
                                 actions.append(action)
@@ -503,7 +514,7 @@ class DeepQNetwork:
                                                      target_max_q_values)
 
                             for i in range(len(batch)):
-                                self.replay_memory.append(state=batch.states[i],
+                                self.replay_sampler.append(state=batch.states[i],
                                                           action=batch.actions[i],
                                                           reward=batch.rewards[i],
                                                           next_state=batch.next_states[i],
@@ -547,7 +558,7 @@ class DeepQNetwork:
                 epsilon = self.epsilon(step)
 
                 if is_training:
-                    mem_len = len(self.replay_memory)
+                    mem_len = len(self.replay_sampler)
                 else:
                     mem_len = 0
 
@@ -607,7 +618,7 @@ class DeepQNetwork:
 
 
     def epsilon_greedy(self, q_values, step):
-        epsilon = max(self.eps_min, self.eps_max - (self.eps_max-self.eps_min) * step/self.eps_decay_steps)
+        epsilon = self.epsilon(step)
         if np.random.rand() < epsilon:
             return np.random.randint(self.sess.model.num_outputs) # random action
         else:
@@ -619,7 +630,7 @@ class DeepQNetwork:
 
 
     def get_target_max_q_values(self, rewards, continues, next_states):
-        if self.options['use_double']:
+        if self.conf['use_double']:
             max_next_q_values = self.sess.model.double_max_q_values.eval(
                 feed_dict={self.sess.model.X_state: next_states})
         else:
@@ -642,7 +653,7 @@ class DeepQNetwork:
         return '{}_replay_memory.hdf5'.format(self.save_path_prefix)
 
 
-    def get_session(parent, init_model=False, load_model=True, save_model=False):
+    def get_session(parent, init_env=True, init_model=False, load_model=True, save_model=False):
         class Session:
             def __enter__(self):
                 return self.open()
@@ -664,22 +675,27 @@ class DeepQNetwork:
 
             def restore(self, save_path_prefix):
                 if not os.path.exists(save_path_prefix + '.index'):
-                    parent.log('model does not exist:', save_path_prefix)
+                    parent.log('  model does not exist:', save_path_prefix)
                     return False
 
-                parent.log('restoring model: ', save_path_prefix)
+                parent.log('  restoring model: ', save_path_prefix)
                 self.saver.restore(self._sess, save_path_prefix)
-                parent.log('restored model')
+                parent.log('  restored model')
 
                 return True
 
 
             def open(self):
-                parent.log('creating new session. load_model: ', load_model, 'save_model:', save_model)
+                parent.log('creating new session. init_env:', init_env, 'load_model: ', load_model, 'save_model:', save_model)
+
+                if init_env:
+                    self.env = gym.make(parent.game_id)
+                    self.env.seed(int(time.time()))
+                    parent.conf['action_space'] = self.env.action_space.n
 
                 tf.reset_default_graph()
 
-                self.model = parent.agent_class(parent.env, options=parent.options)
+                self.model = parent.agent_class(conf=parent.conf)
                 self.saver = tf.train.Saver()
 
                 config = tf.ConfigProto()
@@ -705,6 +721,10 @@ class DeepQNetwork:
 
 
             def close(self, ty=None, value=None, tb=None):
+                if init_env:
+                    self.env.close()
+
+
                 if save_model:
                     self.save(parent.save_path_prefix)
 

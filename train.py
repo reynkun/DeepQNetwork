@@ -6,7 +6,7 @@ from rl.deep_q_network import DeepQNetwork
 parser = argparse.ArgumentParser()
 
 parser.add_argument('-a', '--agent', dest='agent', default='rl.game_agent.BreakoutAgent')
-parser.add_argument('-g', '--game-id', dest='game_id', default='BreakoutDeterministic-v4')
+parser.add_argument('-g', '--game-id', dest='game_id', default='Breakout-v0')
 parser.add_argument('-m', '--model-save-prefix', dest='model_save_prefix', default=None)
 parser.add_argument('-O', '--dir', '--save-dir', dest='save_dir', default='./data')
 

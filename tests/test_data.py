@@ -9,7 +9,7 @@ test_base.TestBase.add_lib_dir_sys_path()
 from rl.data.replay_memory_disk import ReplayMemoryDisk
 from rl.data.replay_memory import ReplayMemory
 from rl.data.sum_tree import SumTree
-from rl.data.replay_sampler import ReplaySampler
+from rl.data.replay_sampler_priority import ReplaySamplerPriority
 
 
 class TestData(test_base.TestBase):
@@ -507,7 +507,7 @@ class TestData(test_base.TestBase):
         if os.path.exists(data_fn):
             os.unlink(data_fn)
 
-        rp = ReplaySampler(ReplayMemoryDisk(data_fn,
+        rp = ReplaySamplerPriority(ReplayMemoryDisk(data_fn,
                                             1,
                                             1,
                                             1,
@@ -535,7 +535,7 @@ class TestData(test_base.TestBase):
         if os.path.exists(data_fn):
             os.unlink(data_fn)
 
-        rp = ReplaySampler(ReplayMemoryDisk(data_fn,
+        rp = ReplaySamplerPriority(ReplayMemoryDisk(data_fn,
                                             1,
                                             1,
                                             1,
@@ -569,7 +569,7 @@ class TestData(test_base.TestBase):
         if os.path.exists(data_fn):
             os.unlink(data_fn)
 
-        rp = ReplaySampler(ReplayMemoryDisk(data_fn,
+        rp = ReplaySamplerPriority(ReplayMemoryDisk(data_fn,
                                             1,
                                             1,
                                             1,
@@ -596,7 +596,7 @@ class TestData(test_base.TestBase):
 
         if os.path.exists(data_fn):
             os.unlink(data_fn)
-        rp = ReplaySampler(ReplayMemoryDisk(data_fn,
+        rp = ReplaySamplerPriority(ReplayMemoryDisk(data_fn,
                                             1,
                                             1,
                                             1,
@@ -652,7 +652,7 @@ class TestData(test_base.TestBase):
         if os.path.exists(data_fn):
             os.unlink(data_fn)
 
-        rp = ReplaySampler(ReplayMemoryDisk(data_fn,
+        rp = ReplaySamplerPriority(ReplayMemoryDisk(data_fn,
                                             1,
                                             1,
                                             1,
@@ -706,7 +706,7 @@ class TestData(test_base.TestBase):
         if os.path.exists(data_fn):
             os.unlink(data_fn)
 
-        rp = ReplaySampler(ReplayMemoryDisk(data_fn,
+        rp = ReplaySamplerPriority(ReplayMemoryDisk(data_fn,
                                             1,
                                             1,
                                             1,
@@ -782,7 +782,7 @@ class TestData(test_base.TestBase):
         if os.path.exists(data_fn):
             os.unlink(data_fn)
 
-        rp = ReplaySampler(ReplayMemoryDisk(data_fn,
+        rp = ReplaySamplerPriority(ReplayMemoryDisk(data_fn,
                                             1,
                                             1,
                                             1,
@@ -841,7 +841,7 @@ class TestData(test_base.TestBase):
 
         rp.close()
 
-        rp2 = ReplaySampler(ReplayMemoryDisk(data_fn,
+        rp2 = ReplaySamplerPriority(ReplayMemoryDisk(data_fn,
                                              1,
                                              1,
                                              1,
@@ -883,7 +883,7 @@ class TestData(test_base.TestBase):
         if os.path.exists(data_fn):
             os.unlink(data_fn)
 
-        rp = ReplaySampler(ReplayMemoryDisk(data_fn,
+        rp = ReplaySamplerPriority(ReplayMemoryDisk(data_fn,
                                             1,
                                             1,
                                             1,
@@ -900,7 +900,7 @@ class TestData(test_base.TestBase):
         rp.close()
         rp = None
 
-        rp2 = ReplaySampler(ReplayMemoryDisk(data_fn,
+        rp2 = ReplaySamplerPriority(ReplayMemoryDisk(data_fn,
                                             1,
                                             1,
                                             1,

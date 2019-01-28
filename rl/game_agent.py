@@ -22,15 +22,14 @@ class GameAgent:
     state_type = 'uint8'
 
 
-    def __init__(self, env, initialize=True, options=None):
-        self.num_outputs = env.action_space.n
+    def __init__(self, conf, initialize=True):
+        self.conf = self.DEFAULT_OPTIONS.copy()
 
-        self.options = self.DEFAULT_OPTIONS.copy()
+        for key, value in conf.items():
+            if key not in self.conf:
+                self.conf[key] = value
 
-        if options is not None:
-            for key, value in options.items():
-                if key not in self.options:
-                    self.options[key] = value
+        self.num_outputs = conf['action_space']
 
         if initialize:
             self.make_model()
@@ -175,7 +174,7 @@ class GameAgent:
             input_layer = tf.layers.flatten(last)
 
 
-            if self.options['use_dueling']:
+            if self.conf['use_dueling']:
                 # action output
                 last = tf.layers.dense(input_layer,
                                        num_hidden,
@@ -235,12 +234,12 @@ class GameAgent:
                                     trainable=False, 
                                     name='step')
 
-            if self.options['use_momentum']:
-                optimizer = tf.train.MomentumOptimizer(self.options['learning_rate'],
-                                                       self.options['momentum'],
+            if self.conf['use_momentum']:
+                optimizer = tf.train.MomentumOptimizer(self.conf['learning_rate'],
+                                                       self.conf['momentum'],
                                                        use_nesterov=True)
             else:
-                optimizer = tf.train.AdamOptimizer(self.options['learning_rate'])
+                optimizer = tf.train.AdamOptimizer(self.conf['learning_rate'])
 
             self.training_op = optimizer.minimize(self.loss, 
                                                   global_step=self.step)

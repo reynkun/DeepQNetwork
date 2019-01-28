@@ -107,21 +107,6 @@ class ReplayMemoryDisk:
             os.unlink(memory_fn)
 
 
-    def sample_memories(self, target, batch_size=32):
-        idxs = {}
-        dup_count = 0
-
-        for i in range(batch_size):
-            idx = random.randint(0, len(self)-1)
-            while idx in idxs and dup_count < batch_size*3:
-                idx = random.randint(0, len(self)-1)
-                dup_count += 1
-                continue
-
-            idxs[idx] = True
-            self.copy(idx, target, i)
-
-
     def append(self, state=None, action=None, reward=None, next_state=None, cont=None, loss=None):
         self.set(self.cur_idx,
                  state=state,
