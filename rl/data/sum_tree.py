@@ -99,33 +99,5 @@ class SumTree:
         return self.data[item]
 
 
-if __name__ == '__main__':
-    import random
-
-    st = SumTree(100, dtype='uint8')
-    st.add(0.01, 5)
-    st.add(0.09, 6)
-
-    print(st.total())
-
-    idx, d_idx, score, val = st.get(0.05)
-
-    print(idx, d_idx, score, val)
-    st.update(idx, 0.10)
-
-    idx, d_idx, score, val = st.get(0.05)
-
-    print(st.total())
-    print(idx, d_idx, score, val)
-
-    idx, d_idx, score, val = st.get(0.005)
-
-    print(idx, d_idx, score, val)
-    st.update(idx, 0.50)
-
-    idx, d_idx, score, val = st.get(0.005)
-
-    print(st.total())
-    print(idx, d_idx, score, val)
 
 

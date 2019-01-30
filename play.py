@@ -17,13 +17,13 @@ parser.add_argument('--init', dest='initialize', action='store_true', default=Fa
 
 args = parser.parse_args()
 
-options = {}
-options.update(vars(args))
+conf = {}
+conf.update(vars(args))
 
-qn = DeepQNetwork(options, initialize=False)
+qn = DeepQNetwork(conf, initialize=False)
 
-qn.play(use_epsilon=args.use_epsilon, 
-        interval=args.interval, 
-        num_games=args.num_games, 
-        display=args.display,
-        save_video=args.save_video)
+qn.predict(use_epsilon=args.use_epsilon, 
+           interval=args.interval, 
+           num_games=args.num_games, 
+           display=args.display,
+           save_video=args.save_video)

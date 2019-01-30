@@ -6,7 +6,7 @@ from PIL import Image, ImageFont, ImageDraw
 import numpy as np
 
 
-def render_state(state, repeat=True, interval=800):
+def render_state(state, repeat=True, interval=60):
     def update_scene(num, frames, patch):
         patch.set_data(frames[num])
         return patch,
@@ -69,7 +69,7 @@ def render_cart_pole(obs):
     return np.array(img)
 
 
-def render_game(game_frames, actions, render_func=None, repeat=True, interval=300, save_path=None, display=False):
+def render_game(game_frames, actions, render_func=None, repeat=False, interval=60, save_path=None, display=False):
     def update_scene(num, frames, patch):
         patch.set_data(frames[num])
         return patch,
