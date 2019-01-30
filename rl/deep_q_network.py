@@ -35,7 +35,7 @@ class DeepQNetwork:
         'copy_network_steps': 10000,
         'batch_size': 32,
         'model_save_prefix': None,
-        'replay_max_memory_length': 1000000,
+        'replay_max_memory_length': 300000,
         'replay_cache_size': 300000,
         'max_num_training_steps': 2000000,
         'num_game_frames_before_training': 10000,
@@ -402,26 +402,23 @@ class DeepQNetwork:
 
 
     def play_game_generator(self,
-                  game_state=None,
-                  is_training=True,
-                  num_games=None,
-                  use_epsilon=False,
-                  display=False,
-                  save_video=False):
+                            game_state=None,
+                            is_training=True,
+                            num_games=None,
+                            use_epsilon=False,
+                            display=False,
+                            save_video=False):
         # reset game
         if game_state is None:
             game_state = self.make_game_state()
 
-        game_state['obs'] = self.sess.model.preprocess_observation(self.sess.env.reset())
-        game_state['frames'].append(game_state['obs'])
-
         while not game_state['game_done']:
             # play out episode
             for _ in self.play_episode_generator(game_state, 
-                                       is_training=is_training,
-                                       use_epsilon=use_epsilon,
-                                       display=display,
-                                       save_video=save_video):
+                                                 is_training=is_training,
+                                                 use_epsilon=use_epsilon,
+                                                 display=display,
+                                                 save_video=save_video):
                 yield
             
             # update frame state of episode / game
@@ -459,42 +456,28 @@ class DeepQNetwork:
 
 
     def play_episode_generator(self, 
-                     game_state, 
-                     is_training=True, 
-                     use_epsilon=False,
-                     display=False,                     
-                     save_video=False):
+                               game_state, 
+                               is_training=True, 
+                               use_epsilon=False,
+                               display=False,                     
+                               save_video=False):
+        game_state['episode_length'] = 0
+        game_state['episode_done'] = False
+
         while not game_state['episode_done'] and not game_state['game_done']:
             game_state['game_length'] += 1
             game_state['episode_length'] += 1
 
             if game_state['game_length'] > self.max_game_length:
-                self.log('game too long, breaking')
                 break
 
             if len(game_state['frames']) >= self.sess.model.num_frame_per_state:
-                # next_state = self.make_state(game_state['frames'])
-
-                # if is_training and game_state['state'] is not None:
-                #     self.add_memories(state=game_state['state'], 
-                #                       action=game_state['action'], 
-                #                       reward=game_state['reward'], 
-                #                       cont=1, 
-                #                       next_state=next_state)
-
-                #     yield
-
-
-                # game_state['state'] = next_state
-                
                 self.update_frame_state(game_state, 
                                         is_training=is_training, 
                                         cont=1)
 
                 # return to training
                 yield
-
-                # print(game_state['state'])
 
                 # Online DQN evaluates what to do
                 q_values = self.sess.model.online_q_values.eval(feed_dict={
@@ -526,14 +509,16 @@ class DeepQNetwork:
                 game_state['reward'] += step_reward
 
                 # check for episode change
-                if self.use_episodes and 'ale.lives' in game_state['info'] and game_state['info']['ale.lives'] != game_state['num_lives']:
+                if self.use_episodes and 'ale.lives' in game_state['info']:
+                    num_lives = game_state['info']['ale.lives']
 
-                    # if game_state['num_lives'] > 0:
-                    #     # previous value was greater than 0
-                    # print('nu lives:', game_state['info']['ale.lives'])
-                    if game_state['info']['ale.lives'] <= 0:
+                    if game_state['num_lives'] is not None and num_lives != game_state['num_lives']:
                         game_state['episode_done'] = True
-                    game_state['num_lives'] = game_state['info']['ale.lives']
+
+                    if num_lives <= 0:
+                        game_state['game_done'] = True
+
+                    game_state['num_lives'] = num_lives
 
                 if game_state['game_done']:
                     break
@@ -549,7 +534,7 @@ class DeepQNetwork:
 
 
     def make_game_state(self):
-        return {
+        game_state = {
             'game_start_time': time.time(),
             'game_done': False,
             'episode_done': False,
@@ -568,6 +553,11 @@ class DeepQNetwork:
             'actions_render': [],
             'frames_render': []
         }        
+
+        game_state['obs'] = self.sess.model.preprocess_observation(self.sess.env.reset())
+        game_state['frames'].append(game_state['obs'])
+
+        return game_state
 
 
     def update_frame_state(self, game_state, is_training=True, cont=1):

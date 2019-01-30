@@ -947,3 +947,252 @@ class DeepQNetwork:
     def log(self, *mesg):
         # print(time_string(), self.header, ' '.join(mesg))
         print('{} [{}] {}'.format(time_string(), self.header, ' '.join([str(m) for m in mesg])))
+
+
+
+    def run_game(self,
+                 is_training=False,
+                 num_games=None,
+                 use_epsilon=False,
+                 interval=60,
+                 display=False,
+                 save_video=False):
+        self.play_init()
+
+        try:
+            while True:
+                self.game_init()
+
+                self.action = 0
+                self.reward = None
+                self.info = None
+                self.game_done = False
+                self.state = None
+                self.num_lives = 0
+
+                # for not training only
+                if is_training:
+                    self.game_count += 1
+                else:
+                    actions = []
+                    game_frames = []
+
+                    if self.play_game_count >= num_games:
+                        break
+
+                    self.play_game_count += 1
+
+                obs = self.sess.env.reset()
+                obs = self.sess.model.preprocess_observation(obs)
+
+                self.state_frames.append(obs)
+
+                while not self.game_done:
+                    episode_done = False
+                    episode_length = 0
+
+                    while not episode_done and not self.game_done:
+                        iteration += 1
+                        game_length += 1
+                        episode_length += 1
+
+                        if game_length > max_game_length:
+                            self.log('game too long, breaking')
+                            break
+
+                        step = self.sess.run([self.sess.model.step])[0]
+
+                        if len(self.state_frames) >= self.sess.model.num_frame_per_state:
+                            next_state = self.make_state(self.state_frames)
+
+                            if is_training and self.state is not None:
+                                batch.append(state=self.state,
+                                             action=self.action,
+                                             reward=self.reward,
+                                             cont=1,
+                                             next_state=next_state)
+
+                                if len(batch) >= self.batch_size:
+                                    target_max_q_values = self.get_target_max_q_values(batch.rewards,
+                                                                                       batch.continues,
+                                                                                       batch.next_states)
+
+                                    losses = self.get_losses(batch.states,
+                                                             batch.actions,
+                                                             target_max_q_values)
+
+                                    for i in range(len(batch)):
+                                        self.replay_sampler.append(state=batch.states[i],
+                                                                   action=batch.actions[i],
+                                                                   reward=batch.rewards[i],
+                                                                   next_state=batch.next_states[i],
+                                                                   cont=1,
+                                                                   loss=losses[i])
+                                    batch.clear()
+
+                                yield
+
+
+                            self.state = next_state
+
+                            # Online DQN evaluates what to do
+                            # print('next_state:', next_state.shape)
+                            q_values = self.sess.model.online_q_values.eval(feed_dict={self.sess.model.X_state: [next_state]})
+                            self.total_max_q += q_values.max()
+
+                            if is_training or use_epsilon:
+                                self.action = self.epsilon_greedy(q_values,
+                                                             step)
+                            else:
+                                self.action = np.argmax(q_values)
+
+                        self.action = self.sess.model.before_action(self.action, obs, self.reward, self.game_done, self.info)
+
+                        # run action for frame_skip steps
+                        self.reward = 0
+                        for i in range(self.frame_skip):
+                            # Online DQN plays
+                            obs, step_reward, self.game_done, self.info = self.sess.env.step(self.action)
+
+                            if not is_training and (save_video or display):
+                                actions.append(self.action)
+                                game_frames.append(self.sess.model.render_obs(obs))
+
+                            self.reward += step_reward
+
+                            # check for episode change
+                            if self.use_episodes and 'ale.lives' in self.info and self.info['ale.lives'] != self.num_lives:
+                                if self.num_lives > 0:
+                                    episode_done = True
+                                self.num_lives = self.info['ale.lives']
+
+                            if self.game_done:
+                                break
+
+                            if episode_done:
+                                break
+
+                        self.game_score += reward
+
+                        obs = self.sess.model.preprocess_observation(obs)
+                        self.state_frames.append(obs)
+
+                    num_episodes += 1
+
+                    # game / episode done, save last step
+                    next_state = self.make_state(self.state_frames)
+
+                    if is_training and self.state is not None:
+                        batch.append(state=self.state,
+                                     action=self.action,
+                                     reward=reward,
+                                     cont=0,
+                                     next_state=next_state)
+
+                        if len(batch) >= self.batch_size:
+                            target_max_q_values = self.get_target_max_q_values(batch.rewards,
+                                                                               batch.continues,
+                                                                               batch.next_states)
+
+                            losses = self.get_losses(batch.states,
+                                                     batch.actions,
+                                                     target_max_q_values)
+
+                            for i in range(len(batch)):
+                                self.replay_sampler.append(state=batch.states[i],
+                                                          action=batch.actions[i],
+                                                          reward=batch.rewards[i],
+                                                          next_state=batch.next_states[i],
+                                                          cont=1,
+                                                          loss=losses[i])
+                            batch.clear()
+
+                        # return to training
+                        yield
+
+                    state = next_state
+
+                if game_length > 0:
+                    mean_max_q = self.total_max_q / game_length
+                else:
+                    mean_max_q = 0
+
+                elapsed = time.time() - self.epoch_start_time
+                if elapsed > 0:
+                    frame_rate = game_length / (time.time() - self.epoch_start_time)
+                else:
+                    frame_rate = 0.0
+
+                report_elapsed = time.time() - report_start_time
+                if report_elapsed > self.play_report_interval:
+                    report_rate = (self.play_iteration - self.play_report_last_iteration) / (report_elapsed)
+                    self.play_report_last_iteration = self.play_iteration
+                    report_start_time = time.time()
+
+                self.game_scores.append(self.game_score)
+
+                if len(game_scores) > 0:
+                    avg_score = sum(game_scores) / len(game_scores)
+                else:
+                    avg_score = 0
+
+                max_qs.append(mean_max_q)
+
+                avg_max_q = sum(max_qs) / len(max_qs)
+
+                epsilon = self.epsilon(step)
+
+                if is_training:
+                    mem_len = len(self.replay_sampler)
+                else:
+                    mem_len = 0
+
+                if is_training:
+                    if self.game_count % self.sess.model.game_play_report_interval == 0:
+                        self.log('[play] step {} game {} epi {} len: {:d} max_q: {:0.3f}/{:0.3f} score: {:0.1f} avg: {:0.2f} mem: {:d} eps: {:0.3f} fr: {:0.1f}/{:0.1f}'.format(
+                                   step,
+                                   self.game_count,
+                                   self.num_episodes,
+                                   self.game_length,
+                                   mean_max_q,
+                                   avg_max_q,
+                                   game_score,
+                                   avg_score,
+                                   mem_len,
+                                   epsilon,
+                                   frame_rate,
+                                   report_rate))
+
+                else:
+                    self.log('[play] step {} game {} epi {} len: {:d} max_q: {:0.3f}/{:0.3f} score: {:0.1f} avg: {:0.2f} mem: {:d} eps: {:0.3f} fr: {:0.1f}/{:0.1f}'.format(
+                                    step,
+                                    self.play_game_count,
+                                    self.num_episodes,
+                                    self.game_length,
+                                    mean_max_q,
+                                    avg_max_q,
+                                    game_score,
+                                    avg_score,
+                                    mem_len,
+                                    epsilon,
+                                    frame_rate,
+                                    report_rate))
+
+                    if save_video:
+                        save_path = os.path.join(self.save_dir,
+                                                 'video-{}-{}.mp4'.format(step,
+                                                                          self.game_count))
+                    else:
+                        save_path = None
+
+                    if save_video or display:
+                        render_game(game_frames,
+                                    self.actions,
+                                    repeat=False,
+                                    interval=interval,
+                                    save_path=save_path,
+                                    display=display)
+
+
+        except KeyboardInterrupt:
+            self.log('play interrupted')

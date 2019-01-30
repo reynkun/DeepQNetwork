@@ -24,19 +24,20 @@ class TestNetwork(test_base.TestBase):
         os.makedirs(self.data_dir)
 
         self.conf = self.get_conf()
-
-        self.network = DeepQNetwork('Breakout-v0',
-                                    'rl.game_agent.BreakoutAgent',
-                                    conf=self.conf,
+        self.network = DeepQNetwork(conf=self.conf,
                                     initialize=True)
 
 
     def get_conf(self):
         return {
+            'game_id': 'Breakout-v0',
+            'agent': 'rl.game_agent.BreakoutAgent',
             'num_game_frames_before_training': 100,
             'save_dir': self.data_dir,
             'use_memory': True,
-            'save_model_steps': 8
+            'save_model_steps': 8,
+            'replay_max_memory_length': 1000,
+            'batch_size': 1
         }
 
 
@@ -68,7 +69,7 @@ class TestNetwork(test_base.TestBase):
             self.assertTrue(os.path.exists(os.path.join(self.data_dir, '{}.meta'.format(self.network.game_id))))
 
 
-    def test_play(self):
+    def test_play_game(self):
         self.network.sess = self.network.get_session(init_model=True)
 
         with self.network.sess:
@@ -78,22 +79,53 @@ class TestNetwork(test_base.TestBase):
             num_steps = 0
 
             game_state = self.network.make_game_state()
-            for _ in self.network.play_game(game_state=game_state):
+            for _ in self.network.play_game_generator(game_state=game_state):
                 num_steps += 1
 
-            self.assertGreater(num_steps, 150)
+            self.assertGreater(num_steps, 50)
             self.assertEqual(len(self.network.play_game_scores), 1)
             self.assertEqual(len(self.network.play_max_qs), 1)
             self.assertGreater(len(self.network.memories), 0)
-            self.assertGreater(len(self.network.memories) + self.network.batch_size, num_steps)
-
+            self.assertEqual(len(self.network.memories) + 1, num_steps)
+            self.assertEqual(len(self.network.play_batch), 0)
+            self.assertEqual(game_state['episode_done'], True)
+            self.assertEqual(game_state['game_done'], True)
             self.assertEqual(game_state['num_lives'], 0)
 
-            # self.assertEqual(self.network.step, num_train_steps)
-            # self.assertEqual(len(self.network.total_losses), num_train_steps)
-            # self.assertEqual(len(self.network.memories), old_count + self.network.batch_size)
-            # self.assertTrue(os.path.exists(os.path.join(self.data_dir, '{}.log'.format(self.network.game_id))))
-            # self.assertTrue(os.path.exists(os.path.join(self.data_dir, '{}.meta'.format(self.network.game_id))))
+            false_count = 0
+            for i in range(len(self.network.memories)):
+                if not self.network.memories.continues[i]:
+                    false_count += 1
+
+            self.assertEqual(false_count, 5)
+
+
+    def test_play_episode(self):
+        self.network.sess = self.network.get_session(init_model=True)
+
+        with self.network.sess:
+            self.network.train_init(init_play_step=False, fill_memories=False)
+            self.network.play_init()
+
+            num_steps = 0
+
+            game_state = self.network.make_game_state()
+            for _ in self.network.play_episode_generator(game_state=game_state):
+                num_steps += 1
+
+            self.assertGreater(num_steps, 10)
+            self.assertLess(num_steps, 10000)
+            self.assertEqual(len(self.network.play_game_scores), 0)
+            self.assertEqual(len(self.network.play_max_qs), 0)
+            self.assertGreater(len(self.network.memories), 0)
+            self.assertEqual(len(self.network.memories) - 1, num_steps)
+            self.assertEqual(len(self.network.play_batch), 0)
+            self.assertEqual(game_state['episode_done'], True)
+            self.assertEqual(game_state['game_done'], False)
+            self.assertEqual(game_state['num_lives'], 4)
+
+            for i in range(len(self.network.memories)):
+                self.assertEqual(self.network.memories.continues[i], 1)
 
 
 if __name__ == '__main__':
