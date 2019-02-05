@@ -10,7 +10,9 @@ from PIL import Image, ImageDraw
 class GameAgent:
     DEFAULT_OPTIONS = {
         'learning_rate': 0.00025,
-        'momentum': 0.95
+        'momentum': 0.95,
+        'use_dueling': False,
+        'use_momentum': False,
     }
 
     input_height = 2
@@ -23,6 +25,8 @@ class GameAgent:
 
 
     def __init__(self, conf, initialize=True):
+        self._sess = None
+
         self.conf = self.DEFAULT_OPTIONS.copy()
 
         for key, value in conf.items():
@@ -34,34 +38,32 @@ class GameAgent:
         if initialize:
             self.make_model()
 
-
-    def best_action(self, X_states, sess=None, use_target=False):
-        if sess is None:
-            sess = tf.get_default_session()
-
-        values = self.predict(X_states, sess=sess, use_target=use_target)
-
-        return np.argmax(values, axis=1)
-
-
     def train(self, X_states, X_actions, y, sess=None):
         if sess is None:
             sess = tf.get_default_session()
 
-        train, loss = sess.run([self.model.training_op, 
-                                self.model.loss], 
-                               feed_dict={
-                                   self.model.X_state: X_states,
-                                   self.model.X_action: X_actions,
-                                   self.model.y: y
-                               })
+        # train, loss = sess.run([self.model.training_op, 
+        #                         self.model.loss], 
+        #                        feed_dict={
+        #                            self.model.X_state: X_states,
+        #                            self.model.X_action: X_actions,
+        #                            self.model.y: y
+        #                        })
+        step, _, losses, loss = sess.run([self.step,
+                                          self.training_op,
+                                          self.losses,
+                                          self.loss],
+                                          feed_dict={
+                                              self.X_state: X_states,
+                                              self.X_action: X_actions,
+                                              self.y: y
+                                          })
 
-        return loss
+        return step, loss, losses
 
 
     def predict(self, X_states, sess=None, use_target=False):
-        if sess is None:
-            sess = tf.get_default_session()
+        sess = self.get_session(sess)
 
         if use_target:
             q_values = self.target_q_values
@@ -69,9 +71,28 @@ class GameAgent:
             q_values = self.online_q_values
 
         values = sess.run([q_values],
-                          feed_dict={self.model.X_state: X_states})
+                          feed_dict={self.X_state: X_states})
 
-        return values
+        return values[0]
+
+
+    def get_action(self, X_states, sess=None, use_target=False):
+        sess = self.get_session(sess)
+
+        values = self.predict(X_states, sess=sess, use_target=use_target)
+
+        return np.argmax(values, axis=1)
+
+
+    def get_max_q_value(self, X_states, sess=None):
+        if self.conf['use_double']:
+            max_next_q_values = self.double_max_q_values.eval(
+                feed_dict={self.X_state: X_states})
+        else:
+            max_next_q_values = self.max_q_values.eval(
+                feed_dict={self.X_state: X_states})
+
+        return max_next_q_values
 
 
     def make_model(self):
@@ -85,7 +106,6 @@ class GameAgent:
         self.game_count = tf.Variable(0, trainable=False, name='game_count')
 
         if self.use_encoder:
-            print('using encoder for state')
             self.X_state = tf.placeholder(tf.float32, shape=[None,
                                                              self.input_height,
                                                              self.input_width,
@@ -111,17 +131,26 @@ class GameAgent:
         self.online_q_values, self.online_actions, online_vars = self.make_q_network(last, name='q_networks/online')
         self.target_q_values, self.target_actions, target_vars = self.make_q_network(last, name='q_networks/target')
 
-        # self.double_max_q_values = tf.reduce_sum(self.target_q_values * tf.one_hot(self.online_actions,
-        #                                                                            self.num_outputs,
-        #                                                                            dtype=tf.float32),
-        #                                          axis=1)
-        # self.max_q_values = tf.reduce_sum(self.target_q_values * tf.one_hot(self.target_actions,
-        #                                                                     self.num_outputs,
-        #                                                                     dtype=tf.float32),
-        #                                   axis=1)
 
-        self.double_max_q_values = tf.reduce_max(self.target_q_values, axis=1)
+
         self.max_q_values = tf.reduce_max(self.target_q_values, axis=1)
+
+        if self.conf['use_double']:
+            # make max q values
+            # print('s target_q_values', self.target_q_values.shape)
+            # print('s max_q_values target', self.max_q_values.shape)
+            # print('s2', tf.argmax(self.online_q_values, axis=1).shape)
+
+            # print('s3 one hot', tf.one_hot(tf.argmax(self.online_q_values, axis=1), self.num_outputs).shape)
+            # print('s4 target * one_hot', self.target_q_values * tf.one_hot(tf.argmax(self.online_q_values, axis=1), self.num_outputs).shape)
+            self.double_max_q_values = tf.reduce_max(self.target_q_values * tf.one_hot(tf.argmax(self.online_q_values, 
+                                                                                                 axis=1), 
+                                                                                       self.num_outputs), 
+                                                     axis=1)
+
+            # self.online_max_q_values = tf.reduce_sum(self.online_q_values * tf.one_hot(self.X_action, self.num_outputs, dtype=tf.float32),
+            #                               axis=1,
+            #                               keepdims=True)
 
 
         copy_ops = []
@@ -245,6 +274,19 @@ class GameAgent:
                                                   global_step=self.step)
 
 
+    def get_session(self, sess=None):
+        if sess is None:
+            if not self._sess:
+                self._sess = tf.get_default_session()    
+            return self._sess
+
+        return sess
+
+
+    def set_session(self, sess):
+        self._sess = sess
+
+
     def preprocess_observation(self, obs):
         return obs.reshape(self.input_height, self.input_width, 1)
 
@@ -323,8 +365,8 @@ class CartPoleAgent(GameAgent):
         return action
 
 
-class PacmanAgent(GameAgent):
-    input_height = 89
+class MsPacmanAgent(GameAgent):
+    input_height = 86
     input_width = 80
     input_channels = 4
     use_conv = True
@@ -334,8 +376,24 @@ class PacmanAgent(GameAgent):
 
 
     def preprocess_observation(self, img):
-        img = img[16:-16:self.compress_ratio, ::self.compress_ratio] # crop and downsize
+        img = img[0:-38:self.compress_ratio, ::self.compress_ratio] # crop and downsize
         img = np.dot(img[...,:3], [0.299, 0.587, 0.144])
 
         return img.astype('uint8').reshape(self.input_height, self.input_width, 1)
+
+
+    # input_height = 89
+    # input_width = 80
+    # input_channels = 4
+    # use_conv = True
+    # compress_ratio = 2
+    # game_report_interval = 10
+    # num_lives = 0
+
+
+    # def preprocess_observation(self, img):
+    #     img = img[16:-16:self.compress_ratio, ::self.compress_ratio] # crop and downsize
+    #     img = np.dot(img[...,:3], [0.299, 0.587, 0.144])
+
+    #     return img.astype('uint8').reshape(self.input_height, self.input_width, 1)
 

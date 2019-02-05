@@ -128,6 +128,39 @@ class TestNetwork(test_base.TestBase):
                 self.assertEqual(self.network.memories.continues[i], 1)
 
 
+    def test_get_target_q_value(self):
+        self.network.sess = self.network.get_session(init_model=True)
+
+        with self.network.sess:
+            self.network.train_init(init_play_step=False, fill_memories=False)
+            self.network.play_init()
+
+            num_steps = 0
+
+            game_state = self.network.make_game_state()
+            for _ in self.network.play_game_generator(game_state=game_state):
+                num_steps += 1
+
+            limit = 128
+
+            rewards = self.network.get_target_max_q_values(self.network.memories.rewards[:limit],
+                                                           self.network.memories.continues[:limit],
+                                                           self.network.memories.next_states[:limit])
+
+            false_count = 0
+
+            for i in range(limit):
+                if self.network.memories.continues[i]:
+                    self.assertGreater(rewards[i], self.network.memories.rewards[i])
+                else:
+                    false_count += 1
+                    self.assertEqual(rewards[i], self.network.memories.rewards[i])
+            self.assertEqual(false_count, 3)
+
+
+
+
+
 if __name__ == '__main__':
     TestNetwork.do()
 

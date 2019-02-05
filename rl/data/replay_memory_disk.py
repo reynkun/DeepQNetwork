@@ -270,6 +270,14 @@ class ReplayMemoryDisk:
             yield self[i]
 
 
+    def __enter__(self):
+        return self
+
+
+    def __exit__(self):
+        self.close()
+
+
     @property
     def states(self):
         return self.data_file['states']

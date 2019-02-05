@@ -6,12 +6,13 @@ import importlib
 import inspect
 
 from collections import deque
-from logging.handlers import TimedRotatingFileHandler
 
 import gym
 import tensorflow as tf
 import numpy as np
 
+from .utils.session import Session
+from .utils.logging import init_logging, log
 from .game.render import render_game
 from .data.replay_memory_disk import ReplayMemoryDisk
 from .data.replay_memory import ReplayMemory
@@ -33,7 +34,7 @@ class DeepQNetwork:
         'discount_rate': 0.99,
         'save_model_steps': 10000,
         'copy_network_steps': 10000,
-        'batch_size': 32,
+        'batch_size': 64,
         'model_save_prefix': None,
         'replay_max_memory_length': 300000,
         'replay_cache_size': 300000,
@@ -57,8 +58,6 @@ class DeepQNetwork:
 
 
     def __init__(self, conf, initialize=False):
-        # self.game_id = game_id
-        # self.agent = agent
         self.save_dir = conf['save_dir']
 
         if initialize:
@@ -91,6 +90,7 @@ class DeepQNetwork:
 
         file_prefix = self.game_id
         self.save_path_prefix = os.path.join(self.save_dir, file_prefix)
+        self.conf['save_path_prefix'] = self.save_path_prefix
 
         if initialize:
             # now write final conf
@@ -101,25 +101,11 @@ class DeepQNetwork:
 
         # init logging
         if self.conf.get('use_log', True):
-            self.init_logging()
-            self.use_log = True
-        else:
-            self.use_log = False
+            init_logging(self.save_path_prefix)
 
-        self.log('config values:')
+        log('config values:')
         for key, value in self.conf.items():
-            self.log('  {}: {}'.format(key, value))
-
-        # make agent
-        if isinstance(self.agent, str):
-            mod_agent_str, cl_agent_str = self.agent.rsplit('.', 1)
-            mod_ag = importlib.import_module(mod_agent_str)
-
-            self.agent_class = getattr(mod_ag, cl_agent_str)
-        elif inspect.isclass(self.agent):
-            self.agent_class = self.agent
-        else:
-            raise Exception('invalid agent class')
+            log('  {}: {}'.format(key, value))
 
         os.environ['TF_CPP_MIN_LOG_LEVEL'] = str(self.conf['tf_log_level'])
 
@@ -132,19 +118,20 @@ class DeepQNetwork:
 
         start_time = time.time()
 
-        self.log('train start')
+        log('train start')
 
-        with self.get_session(init_env=True,
-                              init_model=True,
-                              load_model=True,
-                              save_model=True) as self.sess:
+        with Session(self.conf,
+                     init_env=True,
+                     init_model=True,
+                     load_model=True,
+                     save_model=True) as self.sess:
             self.train_init()
             self.train_loop()
             self.train_finish()
 
         elapsed = time.time() - start_time 
 
-        self.log('train finished in {:0.1f} seconds / {:0.1f} mins / {:0.1f} hours'.format(elapsed, elapsed / 60, elapsed / 60 / 60))
+        log('train finished in {:0.1f} seconds / {:0.1f} mins / {:0.1f} hours'.format(elapsed, elapsed / 60, elapsed / 60 / 60))
 
 
     def train_init(self, init_play_step=True, fill_memories=True):
@@ -183,9 +170,9 @@ class DeepQNetwork:
                                          max_size=self.replay_max_memory_length)
 
             if os.path.exists(self.get_replay_memory_path()):
-                self.log('loading old memories from', self.get_replay_memory_path())
+                log('loading old memories from', self.get_replay_memory_path())
                 old_memories = ReplayMemoryDisk(self.get_replay_memory_path())
-                self.log('found', len(old_memories))
+                log('found', len(old_memories))
                 self.memories.extend(old_memories)
         else:
             self.memories = ReplayMemoryDisk(self.get_replay_memory_path(),
@@ -211,7 +198,7 @@ class DeepQNetwork:
         if fill_memories:
             # fill replay memory when first starting training
             if len(self.replay_sampler) < self.num_game_frames_before_training:
-                self.log('filling memories until', self.num_game_frames_before_training)
+                log('filling memories until', self.num_game_frames_before_training)
 
             while len(self.replay_sampler) < self.num_game_frames_before_training:
                 next(self.play_step)
@@ -219,12 +206,12 @@ class DeepQNetwork:
 
     def train_loop(self):
         try:
-            self.log('start training')
+            log('start training')
 
             while self.step < self.max_num_training_steps:
                 self.train_step()
         except (KeyboardInterrupt, StopIteration):
-            self.log('train interrupted')
+            log('train interrupted')
 
 
     def train_step(self):
@@ -246,26 +233,20 @@ class DeepQNetwork:
                                                            self.train_batch.continues,
                                                            self.train_batch.next_states)
 
-        # train the online DQN
-        tr_res, new_losses, loss_val = self.sess.run([self.sess.model.training_op,
-                                                      self.sess.model.losses,
-                                                      self.sess.model.loss],
-                                                     feed_dict={
-                                                         self.sess.model.X_state: self.train_batch.states,
-                                                         self.sess.model.X_action: self.train_batch.actions,
-                                                         self.sess.model.y: target_max_q_values
-                                                     })
 
-        self.step = self.sess.model.step.eval()
+        self.step, loss, losses = self.sess.model.train(self.train_batch.states,
+                                                        self.train_batch.actions,
+                                                        target_max_q_values,
+                                                        sess=self.sess)
 
         if self.use_priority:
-            self.replay_sampler.update_sum_tree(tree_idxes, new_losses)
+            self.replay_sampler.update_sum_tree(tree_idxes, losses)
 
-        self.total_losses.append(loss_val)
+        self.total_losses.append(loss)
 
         # Regularly copy the online DQN to the target DQN
         if self.step % self.copy_steps == 0:
-            self.log('copying online to target dqn')
+            log('copying online to target dqn')
             self.sess.model.copy_online_to_target.run()
 
         # And save regularly
@@ -277,7 +258,7 @@ class DeepQNetwork:
         if self.num_train_steps_save_video is not None and \
                 self.step % self.num_train_steps_save_video == 0:
 
-            self.log('saving video at step', self.step)
+            log('saving video at step', self.step)
             for _ in self.run_game(is_training=False,
                                    num_games=1,
                                    use_epsilon=False,
@@ -304,17 +285,17 @@ class DeepQNetwork:
 
             self.total_losses.clear()
 
-            self.log('[train] step {} avg loss: {:0.5f} mem: {:d} fr: {:0.1f}'.format(self.step,
+            log('[train] step {} avg loss: {:0.5f} mem: {:d} fr: {:0.1f}'.format(self.step,
                                                                                       avg_loss,
                                                                                       len(self.replay_sampler),
                                                                                       frame_rate))
 
 
     def train_finish(self):
-        self.log('closing replay memory')
+        log('closing replay memory')
 
         if self.conf['use_memory']:
-            self.log('saving', len(self.memories), 'memories to disk')
+            log('saving', len(self.memories), 'memories to disk')
             old_memories = ReplayMemoryDisk(self.get_replay_memory_path(),
                                             self.sess.model.input_height,
                                             self.sess.model.input_width,
@@ -326,7 +307,7 @@ class DeepQNetwork:
             old_memories.extend(self.memories)
             old_memories.close()
 
-            self.log('saved memory to disk')
+            log('saved memory to disk')
         else:
             self.replay_sampler.close()
 
@@ -339,10 +320,11 @@ class DeepQNetwork:
                 use_epsilon=False,
                 interval=60,
                 display=False, save_video=False):
-        with self.get_session(init_env=True,
-                              init_model=False,
-                              load_model=True,
-                              save_model=False) as self.sess:
+        with Session(self.conf,
+                     init_env=True,
+                     init_model=False,
+                     load_model=True,
+                     save_model=False) as self.sess:
             for _ in self.play_generator(is_training=False,
                                          num_games=num_games,
                                          use_epsilon=use_epsilon,
@@ -369,7 +351,7 @@ class DeepQNetwork:
 
 
         except KeyboardInterrupt:
-            self.log('play interrupted')
+            log('play interrupted')
 
 
     def play_init(self):
@@ -480,10 +462,10 @@ class DeepQNetwork:
                 yield
 
                 # Online DQN evaluates what to do
-                q_values = self.sess.model.online_q_values.eval(feed_dict={
-                                                                    self.sess.model.X_state: [game_state['state']]
-                                                                })
+                q_values = self.sess.model.predict([game_state['state']], sess=self.sess)
+
                 game_state['total_max_q'] += q_values.max()
+
 
                 if is_training or use_epsilon:
                     game_state['action'] = self.epsilon_greedy(q_values, self.step)
@@ -619,6 +601,16 @@ class DeepQNetwork:
             else:
                 avg_score = 0
 
+            min_score = None
+            max_score = None
+
+            for score in self.play_game_scores:
+                if max_score is None or score > max_score:
+                    max_score = score
+
+                if min_score is None or score < min_score:
+                    min_score = score
+
             if len(self.play_max_qs) > 0:
                 avg_max_q = sum(self.play_max_qs) / len(self.play_max_qs)
             else:
@@ -631,15 +623,16 @@ class DeepQNetwork:
             else:
                 mem_len = 0
 
-            self.log('[play] step {} game {}/{} len: {:d} max_q: {:0.3f}/{:0.3f} score: {:0.1f}/{:0.1f} mem: {:d} eps: {:0.3f} fr: {:0.1f}'.format(
+            log('[play] step {} game {}/{} len: {:d} max_q: {:0.3f}/{:0.3f} score: {:0.1f}/{:0.1f}/{:0.1f} mem: {:d} eps: {:0.3f} fr: {:0.1f}'.format(
                        self.step,
                        self.cur_game_count,
                        self.total_game_count,
                        game_state['game_length'],
                        mean_max_q,
                        avg_max_q,
-                       game_state['score'],
                        avg_score,
+                       min_score,
+                       max_score,
                        mem_len,
                        epsilon,
                        frame_rate))
@@ -662,13 +655,8 @@ class DeepQNetwork:
 
 
     def get_target_max_q_values(self, rewards, continues, next_states):
-        if self.conf['use_double']:
-            max_next_q_values = self.sess.model.double_max_q_values.eval(
-                feed_dict={self.sess.model.X_state: next_states})
-        else:
-            max_next_q_values = self.sess.model.max_q_values.eval(
-                feed_dict={self.sess.model.X_state: next_states})
-
+        max_next_q_values = self.sess.model.get_max_q_value(next_states, 
+                                                            sess=self.sess)
 
         return rewards + continues * self.discount_rate * max_next_q_values
 
@@ -685,111 +673,111 @@ class DeepQNetwork:
         return '{}_replay_memory.hdf5'.format(self.save_path_prefix)
 
 
-    def get_session(parent, init_env=True, init_model=False, load_model=True, save_model=False):
-        class Session:
-            def __enter__(self):
-                return self.open()
+    # def get_session(parent, init_env=True, init_model=False, load_model=True, save_model=False):
+    #     class Session:
+    #         def __enter__(self):
+    #             return self.open()
 
 
-            def __exit__(self, ty, value, tb):
-                self.close(ty, value, tb)
+    #         def __exit__(self, ty, value, tb):
+    #             self.close(ty, value, tb)
 
 
-            def run(self, *args, **kwargs):
-                return self._sess.run(*args, **kwargs)
+    #         def run(self, *args, **kwargs):
+    #             return self._sess.run(*args, **kwargs)
 
 
-            def save(self, save_path_prefix):
-                parent.log('saving model: ', save_path_prefix)
-                self.saver.save(self._sess, save_path_prefix)
-                parent.log('saved model')
+    #         def save(self, save_path_prefix):
+    #             parent.log('saving model: ', save_path_prefix)
+    #             self.saver.save(self._sess, save_path_prefix)
+    #             parent.log('saved model')
 
 
-            def restore(self, save_path_prefix):
-                if not os.path.exists(save_path_prefix + '.index'):
-                    parent.log('  model does not exist:', save_path_prefix)
-                    return False
+    #         def restore(self, save_path_prefix):
+    #             if not os.path.exists(save_path_prefix + '.index'):
+    #                 parent.log('  model does not exist:', save_path_prefix)
+    #                 return False
 
-                parent.log('  restoring model: ', save_path_prefix)
-                self.saver.restore(self._sess, save_path_prefix)
-                parent.log('  restored model')
+    #             parent.log('  restoring model: ', save_path_prefix)
+    #             self.saver.restore(self._sess, save_path_prefix)
+    #             parent.log('  restored model')
 
-                return True
-
-
-            def open(self):
-                parent.log('creating new session. init_env:', init_env, 'load_model:', load_model, 'save_model:', save_model)
-
-                if init_env:
-                    self.env = gym.make(parent.game_id)
-                    self.env.seed(int(time.time()))
-                    parent.conf['action_space'] = self.env.action_space.n
-
-                tf.reset_default_graph()
-
-                self.model = parent.agent_class(conf=parent.conf)
-                self.saver = tf.train.Saver()
-
-                config = tf.ConfigProto()
-                config.gpu_options.allow_growth = True
-
-                self._sess = tf.Session(config=config)
-                self._sess.as_default()
-                self._sess.__enter__()
-
-                loaded = False
-                if load_model:
-                    loaded = self.restore(parent.save_path_prefix)
-
-                if not loaded and not init_model:
-                    raise Exception('cannot load existing model')
-
-                if not loaded:
-                    self._sess.run(tf.global_variables_initializer())
-
-                tf.get_default_graph().finalize()
-
-                return self
+    #             return True
 
 
-            def close(self, ty=None, value=None, tb=None):
-                if init_env:
-                    self.env.close()
+    #         def open(self):
+    #             parent.log('creating new session. init_env:', init_env, 'load_model:', load_model, 'save_model:', save_model)
+
+    #             if init_env:
+    #                 self.env = gym.make(parent.game_id)
+    #                 self.env.seed(int(time.time()))
+    #                 parent.conf['action_space'] = self.env.action_space.n
+
+    #             tf.reset_default_graph()
+
+    #             self.model = parent.agent_class(conf=parent.conf)
+    #             self.saver = tf.train.Saver()
+
+    #             config = tf.ConfigProto()
+    #             config.gpu_options.allow_growth = True
+
+    #             self._sess = tf.Session(config=config)
+    #             self._sess.as_default()
+    #             self._sess.__enter__()
+
+    #             loaded = False
+    #             if load_model:
+    #                 loaded = self.restore(parent.save_path_prefix)
+
+    #             if not loaded and not init_model:
+    #                 raise Exception('cannot load existing model')
+
+    #             if not loaded:
+    #                 self._sess.run(tf.global_variables_initializer())
+
+    #             tf.get_default_graph().finalize()
+
+    #             return self
 
 
-                if save_model:
-                    self.save(parent.save_path_prefix)
-
-                self._sess.__exit__(ty, value, tb)                    
-                self._sess.close()
-                self._sess = None
+    #         def close(self, ty=None, value=None, tb=None):
+    #             if init_env:
+    #                 self.env.close()
 
 
-        return Session()
+    #             if save_model:
+    #                 self.save(parent.save_path_prefix)
+
+    #             self._sess.__exit__(ty, value, tb)                    
+    #             self._sess.close()
+    #             self._sess = None
 
 
-    def init_logging(self, add_std_err=True):
-        self.logger = logging.getLogger('rl')
-        self.logger.setLevel(logging.DEBUG)
-
-        log_path = self.save_path_prefix + '.log'
-
-        hdlr = TimedRotatingFileHandler(log_path, when='D')
-        formatter = logging.Formatter('%(asctime).19s [%(levelname)s] %(message)s')
-        hdlr.setFormatter(formatter)
-
-        self.logger.addHandler(hdlr)
-
-        if add_std_err:
-            hdlr = logging.StreamHandler()
-            hdlr.setFormatter(formatter)
-            self.logger.addHandler(hdlr)
-
-        return self.logger
+    #     return Session()
 
 
-    def log(self, *mesg):
-        if self.use_log:
-            self.logger.info(' '.join([str(m) for m in mesg]))
-        else:
-            print(' '.join([str(m) for m in mesg]))
+    # def init_logging(self, add_std_err=True):
+    #     self.logger = logging.getLogger('rl')
+    #     self.logger.setLevel(logging.DEBUG)
+
+    #     log_path = self.save_path_prefix + '.log'
+
+    #     hdlr = TimedRotatingFileHandler(log_path, when='D')
+    #     formatter = logging.Formatter('%(asctime).19s [%(levelname)s] %(message)s')
+    #     hdlr.setFormatter(formatter)
+
+    #     self.logger.addHandler(hdlr)
+
+    #     if add_std_err:
+    #         hdlr = logging.StreamHandler()
+    #         hdlr.setFormatter(formatter)
+    #         self.logger.addHandler(hdlr)
+
+    #     return self.logger
+
+
+    # def log(self, *mesg):
+    #     if self.use_log:
+    #         self.logger.info(' '.join([str(m) for m in mesg]))
+    #     else:
+    #         print(' '.join([str(m) for m in mesg]))
