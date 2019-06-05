@@ -34,7 +34,7 @@ class DeepQNetwork:
         'discount_rate': 0.99,
         'save_model_steps': 10000,
         'copy_network_steps': 10000,
-        'batch_size': 64,
+        'batch_size': 32,
         'model_save_prefix': None,
         'replay_max_memory_length': 300000,
         'replay_cache_size': 300000,
@@ -58,6 +58,16 @@ class DeepQNetwork:
 
 
     def __init__(self, conf, initialize=False):
+        '''
+        Constructor
+
+        Will initialize if initialize is true, otherwise it 
+        will search for a configuration file in 'save_dir' directory
+        specified in the conf dict
+
+        Values in conf will override the saved config if possible
+        '''
+
         self.save_dir = conf['save_dir']
 
         if initialize:
@@ -135,6 +145,10 @@ class DeepQNetwork:
 
 
     def train_init(self, init_play_step=True, fill_memories=True):
+        '''
+        Initialize variables for training
+        '''
+
         # train settings
         self.max_num_training_steps = self.conf['max_num_training_steps']
         self.replay_max_memory_length = self.conf['replay_max_memory_length']
@@ -186,6 +200,15 @@ class DeepQNetwork:
         # initialize memory sampler
         if self.use_priority:
             self.replay_sampler = ReplaySamplerPriority(self.memories)
+
+            self.priority_min = 0.001
+            self.per_a = 0.6
+            self.per_b = 0.4
+            self.per_b_increment_per_sampling = 0.001
+            self.absolute_error_upper = 1
+
+            self.tree_idxes = np.zeros((self.batch_size), dtype=int)
+            self.priorities = np.zeros((self.batch_size), dtype=float)
         else:
             self.replay_sampler = ReplaySampler(self.memories)
 
@@ -205,6 +228,10 @@ class DeepQNetwork:
 
 
     def train_loop(self):
+        '''
+        Main training loop
+        '''
+
         try:
             log('start training')
 
@@ -215,32 +242,49 @@ class DeepQNetwork:
 
 
     def train_step(self):
+        '''
+        Run one training step
+        '''
+
         # run game steps
         for _ in range(self.num_game_steps_per_train):
             next(self.play_step)
 
         # sample memories and use the target DQN to produce the target Q-Value
         if self.use_priority:
-            tree_idxes = []
+            self.per_b = np.min([1.0, self.per_b + self.per_b_increment_per_sampling])
+
+            avg_weight = np.power(self.batch_size * (self.replay_sampler.total / len(self.replay_sampler)), -self.per_b)
+
             self.replay_sampler.sample_memories(self.train_batch,
                                                 batch_size=self.batch_size,
-                                                tree_idxes=tree_idxes)
+                                                tree_idxes=self.tree_idxes,
+                                                priorities=self.priorities)
+
+            sampling_probs = self.priorities / self.replay_sampler.total + self.priority_min
+            is_weights = np.power(self.batch_size * sampling_probs, -self.per_b) / avg_weight
         else:
+            # sample randomly from each range
             self.replay_sampler.sample_memories(self.train_batch,
                                                 batch_size=self.batch_size)
+            is_weights = None
 
+        # get max q value 
         target_max_q_values = self.get_target_max_q_values(self.train_batch.rewards,
                                                            self.train_batch.continues,
                                                            self.train_batch.next_states)
 
 
-        self.step, loss, losses = self.sess.model.train(self.train_batch.states,
+        # train the model
+        self.step, losses, loss = self.sess.model.train(self.train_batch.states,
                                                         self.train_batch.actions,
                                                         target_max_q_values,
-                                                        sess=self.sess)
+                                                        is_weights=is_weights)
 
         if self.use_priority:
-            self.replay_sampler.update_sum_tree(tree_idxes, losses)
+            # update priority steps in sum tree
+            losses += self.priority_min
+            self.replay_sampler.update_sum_tree(self.tree_idxes, losses)
 
         self.total_losses.append(loss)
 
@@ -292,6 +336,10 @@ class DeepQNetwork:
 
 
     def train_finish(self):
+        '''
+        Clean up training 
+        '''
+
         log('closing replay memory')
 
         if self.conf['use_memory']:
@@ -320,6 +368,10 @@ class DeepQNetwork:
                 use_epsilon=False,
                 interval=60,
                 display=False, save_video=False):
+        '''
+        Runs game with the given model and calculates the scores
+        '''
+
         with Session(self.conf,
                      init_env=True,
                      init_model=False,
@@ -339,6 +391,10 @@ class DeepQNetwork:
                        use_epsilon=False,
                        display=False,
                        save_video=False):
+        '''
+        Generator which will run the game one frame
+        '''
+
         self.play_init()
 
         try:
@@ -355,6 +411,10 @@ class DeepQNetwork:
 
 
     def play_init(self):
+        '''
+        Initialize play variables
+        '''
+
         # run game settings
         self.eps_min = self.conf['eps_min']
         self.eps_max = self.conf['eps_max']
@@ -390,6 +450,10 @@ class DeepQNetwork:
                             use_epsilon=False,
                             display=False,
                             save_video=False):
+        '''
+        Generator which yields every frame and runs one game
+        '''
+
         # reset game
         if game_state is None:
             game_state = self.make_game_state()
@@ -443,6 +507,10 @@ class DeepQNetwork:
                                use_epsilon=False,
                                display=False,                     
                                save_video=False):
+        '''
+        Generator which yields every frame and runs one episode
+        '''
+
         game_state['episode_length'] = 0
         game_state['episode_done'] = False
 
@@ -462,7 +530,7 @@ class DeepQNetwork:
                 yield
 
                 # Online DQN evaluates what to do
-                q_values = self.sess.model.predict([game_state['state']], sess=self.sess)
+                q_values = self.sess.model.predict([game_state['state']])
 
                 game_state['total_max_q'] += q_values.max()
 
@@ -516,6 +584,10 @@ class DeepQNetwork:
 
 
     def make_game_state(self):
+        '''
+        Initialized game state variables
+        '''
+
         game_state = {
             'game_start_time': time.time(),
             'game_done': False,
@@ -543,6 +615,11 @@ class DeepQNetwork:
 
 
     def update_frame_state(self, game_state, is_training=True, cont=1):
+        '''
+        Makes a frame state from 4 sequential frames.
+        Also saves memories to replay memory
+        '''
+
         next_state = self.make_state(game_state['frames'])
 
         if is_training and game_state['state'] is not None:
@@ -556,6 +633,9 @@ class DeepQNetwork:
 
 
     def add_memories(self, state, action, reward, cont, next_state):
+        '''
+        Add to replay memories
+        '''
         self.play_batch.append(state=state,
                                action=action,
                                reward=reward,
@@ -563,27 +643,42 @@ class DeepQNetwork:
                                next_state=next_state)
 
         if len(self.play_batch) >= self.batch_size:
-            target_max_q_values = self.get_target_max_q_values(self.play_batch.rewards,
-                                                               self.play_batch.continues,
-                                                               self.play_batch.next_states)
+            if self.conf['use_priority']:
+                target_max_q_values = self.get_target_max_q_values(self.play_batch.rewards,
+                                                                   self.play_batch.continues,
+                                                                   self.play_batch.next_states)
 
-            losses = self.get_losses(self.play_batch.states,
-                                     self.play_batch.actions,
-                                     target_max_q_values)
+                losses = self.sess.model.get_losses(self.play_batch.states,
+                                                    self.play_batch.actions,
+                                                    target_max_q_values)
+                losses += self.priority_min
 
-
-            for i in range(len(self.play_batch)):
-                self.replay_sampler.append(state=self.play_batch.states[i],
-                                           action=self.play_batch.actions[i],
-                                           reward=self.play_batch.rewards[i],
-                                           next_state=self.play_batch.next_states[i],
-                                           cont=self.play_batch.continues[i],
-                                           loss=losses[i])
+                for i in range(len(self.play_batch)):
+                    self.replay_sampler.append(state=self.play_batch.states[i],
+                                               action=self.play_batch.actions[i],
+                                               reward=self.play_batch.rewards[i],
+                                               next_state=self.play_batch.next_states[i],
+                                               cont=self.play_batch.continues[i],
+                                               loss=losses[i])
+            else:
+                # print(self.play_batch.states.shape,
+                #       self.play_batch.actions.shape)
+                for i in range(len(self.play_batch)):
+                    self.replay_sampler.append(state=self.play_batch.states[i],
+                                               action=self.play_batch.actions[i],
+                                               reward=self.play_batch.rewards[i],
+                                               next_state=self.play_batch.next_states[i],
+                                               cont=self.play_batch.continues[i],
+                                               loss=0)
 
             self.play_batch.clear()
 
 
     def report_play_stats(self, game_state, is_training=True):
+        '''
+        Replay on play stats
+        '''
+
         if not is_training or self.total_game_count % self.sess.model.game_report_interval == 0:
             if game_state['game_length'] > 0:
                 mean_max_q = game_state['total_max_q'] / game_state['game_length']
@@ -655,129 +750,20 @@ class DeepQNetwork:
 
 
     def get_target_max_q_values(self, rewards, continues, next_states):
-        max_next_q_values = self.sess.model.get_max_q_value(next_states, 
-                                                            sess=self.sess)
+        max_next_q_values = self.sess.model.get_max_q_value(next_states)
 
         return rewards + continues * self.discount_rate * max_next_q_values
 
 
-    def get_losses(self, states, actions, max_q_values):
-        return self.sess.model.losses.eval(feed_dict={
-                                        self.sess.model.X_state: states,
-                                        self.sess.model.X_action: actions,
-                                        self.sess.model.y: max_q_values
-                                      })
+    # def get_losses(self, states, actions, max_q_values):
+    #     return self.sess.model.losses.eval(feed_dict={
+    #                                     self.sess.model.X_state: states,
+    #                                     self.sess.model.X_action: actions,
+    #                                     self.sess.model.y: max_q_values
+    #                                   })
 
 
     def get_replay_memory_path(self):
         return '{}_replay_memory.hdf5'.format(self.save_path_prefix)
 
 
-    # def get_session(parent, init_env=True, init_model=False, load_model=True, save_model=False):
-    #     class Session:
-    #         def __enter__(self):
-    #             return self.open()
-
-
-    #         def __exit__(self, ty, value, tb):
-    #             self.close(ty, value, tb)
-
-
-    #         def run(self, *args, **kwargs):
-    #             return self._sess.run(*args, **kwargs)
-
-
-    #         def save(self, save_path_prefix):
-    #             parent.log('saving model: ', save_path_prefix)
-    #             self.saver.save(self._sess, save_path_prefix)
-    #             parent.log('saved model')
-
-
-    #         def restore(self, save_path_prefix):
-    #             if not os.path.exists(save_path_prefix + '.index'):
-    #                 parent.log('  model does not exist:', save_path_prefix)
-    #                 return False
-
-    #             parent.log('  restoring model: ', save_path_prefix)
-    #             self.saver.restore(self._sess, save_path_prefix)
-    #             parent.log('  restored model')
-
-    #             return True
-
-
-    #         def open(self):
-    #             parent.log('creating new session. init_env:', init_env, 'load_model:', load_model, 'save_model:', save_model)
-
-    #             if init_env:
-    #                 self.env = gym.make(parent.game_id)
-    #                 self.env.seed(int(time.time()))
-    #                 parent.conf['action_space'] = self.env.action_space.n
-
-    #             tf.reset_default_graph()
-
-    #             self.model = parent.agent_class(conf=parent.conf)
-    #             self.saver = tf.train.Saver()
-
-    #             config = tf.ConfigProto()
-    #             config.gpu_options.allow_growth = True
-
-    #             self._sess = tf.Session(config=config)
-    #             self._sess.as_default()
-    #             self._sess.__enter__()
-
-    #             loaded = False
-    #             if load_model:
-    #                 loaded = self.restore(parent.save_path_prefix)
-
-    #             if not loaded and not init_model:
-    #                 raise Exception('cannot load existing model')
-
-    #             if not loaded:
-    #                 self._sess.run(tf.global_variables_initializer())
-
-    #             tf.get_default_graph().finalize()
-
-    #             return self
-
-
-    #         def close(self, ty=None, value=None, tb=None):
-    #             if init_env:
-    #                 self.env.close()
-
-
-    #             if save_model:
-    #                 self.save(parent.save_path_prefix)
-
-    #             self._sess.__exit__(ty, value, tb)                    
-    #             self._sess.close()
-    #             self._sess = None
-
-
-    #     return Session()
-
-
-    # def init_logging(self, add_std_err=True):
-    #     self.logger = logging.getLogger('rl')
-    #     self.logger.setLevel(logging.DEBUG)
-
-    #     log_path = self.save_path_prefix + '.log'
-
-    #     hdlr = TimedRotatingFileHandler(log_path, when='D')
-    #     formatter = logging.Formatter('%(asctime).19s [%(levelname)s] %(message)s')
-    #     hdlr.setFormatter(formatter)
-
-    #     self.logger.addHandler(hdlr)
-
-    #     if add_std_err:
-    #         hdlr = logging.StreamHandler()
-    #         hdlr.setFormatter(formatter)
-    #         self.logger.addHandler(hdlr)
-
-    #     return self.logger
-
-
-    # def log(self, *mesg):
-    #     if self.use_log:
-    #         self.logger.info(' '.join([str(m) for m in mesg]))
-    #     else:
-    #         print(' '.join([str(m) for m in mesg]))

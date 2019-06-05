@@ -5,6 +5,10 @@ from .sum_tree import SumTree
 
 
 class ReplaySamplerPriority:
+    '''
+    Samples memories with priority given by loss
+    '''
+
     MAX_DUPLICATE_RETRIES = 100
 
 
@@ -19,26 +23,33 @@ class ReplaySamplerPriority:
         self.replay_memory.append(state, action, reward, next_state, cont, loss)
 
 
-    def sample_memories(self, target, batch_size=32, tree_idxes=None):
+    def sample_memories(self, target, batch_size=32, priorities=None, tree_idxes=None, skip_duplicates=True):
+        dup_indexes = {}
         dup_count = 0
-        indexes = {}
+        size = self.sum_tree.total / batch_size
+
         for i in range(batch_size):
-            s = random.random() * self.sum_tree.total()
+            s = random.random() * size + i * size
             t_idx, d_idx, score, memory_idx = self.sum_tree.get_with_info(s)
-            while memory_idx in indexes:
-                s = random.random() * self.sum_tree.total()
-                t_idx, d_idx, score, memory_idx = self.sum_tree.get_with_info(s)
-                indexes[memory_idx] = True
+            while skip_duplicates and memory_idx in dup_indexes:
                 dup_count += 1
 
                 if dup_count > self.MAX_DUPLICATE_RETRIES:
                     break
 
+                s = random.random() * size + i * size
+                t_idx, d_idx, score, memory_idx = self.sum_tree.get_with_info(s)
+
+
+            dup_indexes[memory_idx] = True
+
             self.replay_memory.copy(memory_idx, target, i)
 
-            # print('adding', t_idx)
+            if priorities is not None:
+                priorities[i] = score
+
             if tree_idxes is not None:
-                tree_idxes.append(t_idx)
+                tree_idxes[i] = t_idx
 
 
     def update_sum_tree(self, tree_idxes, losses):
@@ -69,3 +80,9 @@ class ReplaySamplerPriority:
     @property
     def cache_size(self):
         return len(self.replay_memory.cache)
+
+
+    @property
+    def total(self):
+        return self.sum_tree.total
+    

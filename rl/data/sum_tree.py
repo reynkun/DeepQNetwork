@@ -12,10 +12,6 @@ class SumTree:
         self.max_reached = False
 
 
-    def total(self):
-        return self.tree[0]
-
-
     def add(self, score, data):
         idx = self.write + self.capacity - 1
 
@@ -78,6 +74,7 @@ class SumTree:
         if parent != 0:
             self._propagate(parent, change)
 
+
     def _retrieve(self, idx, score):
         left = 2 * idx + 1
         right = left + 1
@@ -91,12 +88,19 @@ class SumTree:
             return self._retrieve(right, score - self.tree[left])
 
 
+    @property
+    def total(self):
+        return self.tree[0]
+
+
     def __len__(self):
         return self.size
 
 
     def __getitem__(self, item):
         return self.data[item]
+
+
 
 
 

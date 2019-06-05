@@ -98,6 +98,8 @@ class Session:
 
         tf.get_default_graph().finalize()
 
+        self.model.session = self._sess
+
         return self
 
 
