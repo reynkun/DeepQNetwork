@@ -6,10 +6,12 @@ import tensorflow as tf
 
 from PIL import Image, ImageDraw
 
+from .model.model import Model
 
-class GameAgent:
+
+class GameAgent(Model):
     '''
-    Creates the tensorflow deep q model
+    Creates the Game Agent and its tf network
     '''
 
     DEFAULT_OPTIONS = {
@@ -31,7 +33,7 @@ class GameAgent:
     input_channels = 4
 
     # num of (time) sequential frames to use for learning
-    num_frame_per_state = 4
+    num_frames_per_state = 4
 
     # use convolutional filters. only needs to be false for non-image input
     use_conv = True
@@ -47,18 +49,18 @@ class GameAgent:
 
 
     def __init__(self, conf, initialize=True):
-        self._sess = None
-
+        super().__init__(self, conf)
+        
         self.conf = self.DEFAULT_OPTIONS.copy()
 
         for key, value in conf.items():
             if key not in self.conf:
                 self.conf[key] = value
 
-        self.num_outputs = conf['action_space']
-
-        if initialize:
-            self.make_model()
+        self.num_outputs = self.conf['action_space']
+        self.eps_min = self.conf['eps_min']
+        self.eps_max = self.conf['eps_max']
+        self.eps_decay_steps = self.conf['eps_decay_steps']
 
 
     def train(self, X_states, X_actions, y, is_weights=None):
@@ -66,22 +68,14 @@ class GameAgent:
         trains network
         '''
 
-        if self.conf['use_priority']:
-            feed_dict={
-                self.X_state: X_states,
-                self.X_action: X_actions,
-                self.y: y,
-                self.is_weights: is_weights
-            }
-        else:
-            feed_dict = {
-                self.X_state: X_states,
-                self.X_action: X_actions,
-                self.y: y
-            }
+        feed_dict = {
+            self.X_state: X_states,
+            self.X_action: X_actions,
+            self.y: y
+        }
 
 
-        step, _, losses, loss = self.session.run([self.step,
+        step, _, losses, loss = self.run([self.step,
                                           self.training_op,
                                           self.losses,
                                           self.loss],
@@ -89,7 +83,7 @@ class GameAgent:
         return step, losses, loss
 
 
-    def predict(self, X_states,use_target=False):
+    def predict(self, X_states, use_target=False):
         '''
         Return q values for given states
         '''
@@ -99,7 +93,7 @@ class GameAgent:
         else:
             q_values = self.online_q_values
 
-        values = self.session.run([q_values],
+        values = self.run([q_values],
                                   feed_dict={self.X_state: X_states})
 
         return values[0]
@@ -120,8 +114,8 @@ class GameAgent:
         Get max q value
         '''
 
-        return self.session.run([self.max_q_values],
-                                feed_dict={self.X_state: X_states})[0]
+        return self.run([self.max_q_values],
+                        feed_dict={self.X_state: X_states})[0]
 
 
     def get_losses(self, X_states, actions, max_q_values):
@@ -129,12 +123,80 @@ class GameAgent:
         Get losses
         '''
 
-        return self.session.run([self.abs_losses],
+        return self.run([self.abs_losses],
                                 feed_dict={
                                     self.X_state: X_states,
                                     self.X_action: actions,
                                     self.y: max_q_values
                                 })[0]
+
+    def copy_network(self):
+        self.copy_online_to_target.run()        
+
+
+    def get_step(self):
+        '''
+        Increments step and returns new value
+        '''
+
+        return self.step.eval()
+        
+
+    def set_game_count(self, count):
+        '''
+        sets game count
+        '''
+        self.game_count.load(count)
+
+
+    def get_game_count(self):
+        '''
+        gets game count
+        '''
+
+        return self.run([self.game_count])[0]
+
+
+    def epsilon(self, step):
+        '''
+        Gets current epsilon based on what step and the epsilon range
+        '''
+        return max(self.eps_min, self.eps_max - (self.eps_max-self.eps_min) * step/self.eps_decay_steps)
+
+
+    def epsilon_greedy(self, q_values, step):
+        '''
+        Returns the optimal value if over epsilon, other wise returns the argmax action
+        '''
+        epsilon = self.epsilon(step)
+        if np.random.rand() < epsilon:
+            return np.random.randint(self.num_outputs) # random action
+        else:
+            return np.argmax(q_values) # optimal action
+
+
+    def preprocess_observation(self, obs):
+        '''
+        Preprocess the image observation.  
+        Override in child class to alter input image
+        '''
+        return obs.reshape(self.input_height, self.input_width, 1)
+
+
+    def render_obs(self, obs):
+        '''
+        Render an image of observation.  Only used for non-image inputs 
+        like cartpole.
+        '''
+        return obs
+
+
+    def before_action(self, action, obs, reward, done, info):
+        '''
+        Do preprocessing before action.  May also change action based
+        on obs, info, etc.
+        '''
+        return action
 
 
     def make_model(self):
@@ -208,7 +270,7 @@ class GameAgent:
 
     def make_q_network(self, X_input, name):
         '''
-        Makes the core q network.  
+        Makes the core q network 
         '''
 
         last = X_input
@@ -332,47 +394,6 @@ class GameAgent:
 
             self.training_op = optimizer.minimize(self.loss, 
                                                   global_step=self.step)
-
-
-
-    @property
-    def session(self):
-        '''
-        Return current session
-        '''
-        return self._sess
-    
-
-    @session.setter
-    def session(self, sess):
-        '''
-        Set session
-        '''
-        self._sess = sess
-
-
-    def preprocess_observation(self, obs):
-        '''
-        Preprocess the image observation.  
-        Override in child class to alter input image
-        '''
-        return obs.reshape(self.input_height, self.input_width, 1)
-
-
-    def render_obs(self, obs):
-        '''
-        Render an image of observation.  Only used for non-image inputs 
-        like cartpole.
-        '''
-        return obs
-
-
-    def before_action(self, action, obs, reward, done, info):
-        '''
-        Do preprocessing before action.  May also change action based
-        on obs, info, etc.
-        '''
-        return action
 
 
 class BreakoutAgent(GameAgent):

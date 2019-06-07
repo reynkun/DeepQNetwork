@@ -25,12 +25,16 @@ parser.add_argument('--priority', '--use-priority', dest='use_priority', action=
 parser.add_argument('--max-train', dest='max_num_training_steps', type=int)
 parser.add_argument('--eps', '--eps-steps', dest='eps_decay_steps', type=int)
 parser.add_argument('--mss', '--mem-save-size', dest='mem_save_size', type=int)
+parser.add_argument('--sms', '--save-model-steps', dest='save_model_steps', type=int)
+parser.add_argument('--cns', '--copy-network-steps', dest='copy_network_steps', type=int)
+
 parser.add_argument('--svs', '--save-video-steps', dest='num_train_steps_save_video', type=int)
 parser.add_argument('--fbt', '--frames-before-training', dest='num_game_frames_before_training', type=int)
 parser.add_argument('--fs', '--frame-skip', dest='frame_skip', type=int)
 parser.add_argument('--rs', '--replay-size', dest='replay_max_memory_length', type=int)
 parser.add_argument('--bs', '--batch-size', dest='batch_size', type=int)
 parser.add_argument('--memory', '--use-memory', dest='use_memory', action='store_true')
+parser.add_argument('--disk', '--use-disk', dest='use_memory', action='store_false')
 
 
 args = parser.parse_args()
@@ -38,6 +42,6 @@ args = parser.parse_args()
 conf = {}
 conf.update(vars(args))
 
-qn = DeepQNetwork(conf, initialize=True)
+network = DeepQNetwork(conf, initialize=True)
 
-qn.train()
+network.train()

@@ -5,18 +5,23 @@ import time
 import tensorflow as tf
 
 
-from .logging import log
+from ..utils.logging import log
 
 
-class Session:
+class Model:
+    '''
+    Model handles the complexities of the tensorflow setup and tear down.
+    Also adds model saving and loading
+    '''
+
     def __init__(self, 
                  conf, 
-                 init_env=True, 
+                #  init_env=True, 
                  init_model=False, 
                  load_model=True,
                  save_model=False):
         self.conf = conf
-        self.init_env = init_env
+        # self.init_env = init_env
         self.init_model = init_model
         self.load_model = load_model
         self.save_model = save_model
@@ -53,35 +58,48 @@ class Session:
 
 
     def open(self):
-        log('creating new session. init_env:', self.init_env, 'load_model:', self.load_model, 'save_model:', self.save_model)
+        log('creating new session load_model:', self.load_model, 'save_model:', self.save_model)
 
-        if self.init_env:
-            self.env = gym.make(self.conf['game_id'])
-            self.env.seed(int(time.time()))
-            self.conf['action_space'] = self.env.action_space.n
+        # if self.init_env:
+        #     self.env = gym.make(self.conf['game_id'])
+        #     self.env.seed(int(time.time()))
+        #     self.conf['action_space'] = self.env.action_space.n
 
         tf.reset_default_graph()
 
-        # make agent
-        if isinstance(self.conf['agent'], str):
-            mod_agent_str, cl_agent_str = self.conf['agent'].rsplit('.', 1)
-            mod_ag = importlib.import_module(mod_agent_str)
+        # # make agent
+        # if isinstance(self.conf['agent'], str):
+        #     mod_agent_str, cl_agent_str = self.conf['agent'].rsplit('.', 1)
+        #     mod_ag = importlib.import_module(mod_agent_str)
 
-            agent_class = getattr(mod_ag, cl_agent_str)
-        elif inspect.isclass(self.conf['agent']):
-            agent_class = self.conf['agent']
-        else:
-            raise Exception('invalid agent class')
+        #     agent_class = getattr(mod_ag, cl_agent_str)
+        # elif inspect.isclass(self.conf['agent']):
+        #     agent_class = self.conf['agent']
+        # else:
+        #     raise Exception('invalid agent class')
 
-        self.model = agent_class(conf=self.conf)
+        if self.init_model:
+            self.make_model()
 
+        self.init_tf()
+
+
+        return self
+
+
+    def make_model():
+        raise NotImplementedError
+
+
+    def init_tf(self):
         # make saver
         self.saver = tf.train.Saver()
 
-        # configure tensorflow
+        # set tensorflow to NOT use all of GPU memory
         config = tf.ConfigProto()
         config.gpu_options.allow_growth = True
 
+        # create actual tf session
         self._sess = tf.Session(config=config)
         self._sess.as_default()
         self._sess.__enter__()
@@ -98,14 +116,10 @@ class Session:
 
         tf.get_default_graph().finalize()
 
-        self.model.session = self._sess
-
-        return self
-
 
     def close(self, ty=None, value=None, tb=None):
-        if self.init_env:
-            self.env.close()
+        # if self.init_env:
+        #     self.env.close()
 
         if self.save_model:
             self.save(self.conf['save_path_prefix'])
