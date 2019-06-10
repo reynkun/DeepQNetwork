@@ -153,6 +153,7 @@ class GameGenerator:
 
         game_state['episode_length'] = 0
         game_state['episode_done'] = False
+        game_state['cont'] = 1
 
         while not game_state['episode_done'] and not game_state['game_done']:
             self.step = self.model.get_step()
@@ -181,7 +182,7 @@ class GameGenerator:
                     game_state['action'] = np.argmax(q_values)
 
             game_state['action'] = self.model.before_action(game_state['action'], 
-                                                            game_state['obs'], 
+                                                            game_state['observation'], 
                                                             game_state['reward'], 
                                                             game_state['game_done'], 
                                                             game_state['info'])
@@ -190,11 +191,11 @@ class GameGenerator:
             game_state['reward'] = 0
             for i in range(self.frame_skip):
                 # online network plays
-                game_state['obs'], step_reward, game_state['game_done'], game_state['info'] = self.env.step(game_state['action'])
+                game_state['observation'], step_reward, game_state['game_done'], game_state['info'] = self.env.step(game_state['action'])
 
                 if not is_training and (save_video or display):
                     game_state['actions_render'].append(game_state['action'])
-                    game_state['frames_render'].append(self.model.render_obs(game_state['obs']))
+                    game_state['frames_render'].append(self.model.render_observation(game_state['observation']))
 
                 game_state['reward'] += step_reward
 
@@ -217,10 +218,8 @@ class GameGenerator:
                     break
 
             game_state['score'] += game_state['reward']
-            game_state['obs'] = self.model.preprocess_observation(game_state['obs'])
-            game_state['frames'].append(game_state['obs'])    
-
-        yield game_state
+            game_state['observation'] = self.model.preprocess_observation(game_state['observation'])
+            game_state['frames'].append(game_state['observation'])    
 
 
     def report_play_stats(self, game_state, is_training=True):
@@ -291,7 +290,8 @@ class GameGenerator:
             'game_length': 0,
             'episode_length': 0,
             'score': 0,
-            'obs': None,
+            'observation': None,
+            'old_state': None,
             'state': None,
             'action': 0,
             'reward': None,
@@ -302,8 +302,8 @@ class GameGenerator:
             'frames_render': []
         }        
 
-        game_state['obs'] = self.model.preprocess_observation(self.env.reset())
-        game_state['frames'].append(game_state['obs'])
+        game_state['observation'] = self.model.preprocess_observation(self.env.reset())
+        game_state['frames'].append(game_state['observation'])
 
         return game_state
 

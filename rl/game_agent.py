@@ -183,7 +183,7 @@ class GameAgent(Model):
         return obs.reshape(self.input_height, self.input_width, 1)
 
 
-    def render_obs(self, obs):
+    def render_observation(self, obs):
         '''
         Render an image of observation.  Only used for non-image inputs 
         like cartpole.
@@ -432,7 +432,7 @@ class CartPoleAgent(GameAgent):
     state_type = 'float32'
 
 
-    def render_obs(self, obs):
+    def render_observation(self, obs):
         # rendering for the cart pole environment (in case OpenAI gym can't do it)
         img_w = 600
         img_h = 400

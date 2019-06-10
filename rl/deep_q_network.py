@@ -452,17 +452,19 @@ class DeepQNetwork:
             self.replay_sampler.close()
 
         # save game count
-        self.agent.set_game_count(self.total_game_count)
+        self.agent.set_game_count(self.game_generator.total_game_count)
+        self.agent.save(self.save_path_prefix)
 
 
     def game_step(self):
         game_state = next(self.play_step)
 
-        self.add_memories(state=game_state['old_state'], 
-                          action=game_state['action'], 
-                          reward=game_state['reward'], 
-                          cont=game_state['cont'], 
-                          next_state=game_state['state'])                
+        if game_state['old_state'] is not None:
+            self.add_memories(state=game_state['old_state'], 
+                              action=game_state['action'], 
+                              reward=game_state['reward'], 
+                              cont=game_state['cont'], 
+                              next_state=game_state['state'])                
 
 
 
