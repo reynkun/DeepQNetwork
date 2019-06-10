@@ -14,6 +14,27 @@ class GameGenerator:
         'max_game_length': 50000,
     }
 
+    GAME_STATE_RESET = {
+        'game_start_time': time.time(),
+        'game_done': False,
+        'episode_done': False,
+        'total_max_q': 0,
+        'iteration': 0,
+        'game_length': 0,
+        'episode_length': 0,
+        'score': 0,
+        'observation': None,
+        'old_state': None,
+        'state': None,
+        'action': 0,
+        'reward': None,
+        'cont': 1,
+        'info': None,
+        'num_lives': None,
+        'actions_render': [],
+        'frames_render': []
+    }   
+
 
     def __init__(self, conf, env, model):
         self.env = env
@@ -21,6 +42,7 @@ class GameGenerator:
 
         # set up defaul values
         self.conf = self.DEFAULT_OPTIONS.copy()
+        self.game_state = self.reset_game_state()
 
         # override saved conf with parameters
         for key, value in conf.items():
@@ -30,6 +52,7 @@ class GameGenerator:
 
 
     def play_generator(self,
+                       game_state=None,
                        is_training=False,
                        num_games=None,
                        use_epsilon=False,
@@ -43,7 +66,8 @@ class GameGenerator:
 
         try:
             while num_games is None or self.cur_game_count < num_games:
-                for game_state in self.play_game_generator(is_training=is_training, 
+                for game_state in self.play_game_generator(game_state=game_state,
+                                                           is_training=is_training, 
                                                            use_epsilon=use_epsilon, 
                                                            display=display, 
                                                            save_video=save_video):
@@ -87,6 +111,7 @@ class GameGenerator:
 
 
     def play_game_generator(self,
+                            game_state,
                             is_training=True,
                             num_games=None,
                             use_epsilon=False,
@@ -97,15 +122,15 @@ class GameGenerator:
         '''
 
         # reset game
-        game_state = self.make_game_state()
+        self.reset_game_state(game_state)
 
         while not game_state['game_done']:
             # play out episode
-            for _ in self.play_episode_generator(game_state, 
-                                                 is_training=is_training,
-                                                 use_epsilon=use_epsilon,
-                                                 display=display,
-                                                 save_video=save_video):
+            for game_state in self.play_episode_generator(game_state, 
+                                                          is_training=is_training,
+                                                          use_epsilon=use_epsilon,
+                                                          display=display,
+                                                          save_video=save_video):
                 yield game_state
             
             # update frame final state of episode / game
@@ -219,7 +244,7 @@ class GameGenerator:
 
             game_state['score'] += game_state['reward']
             game_state['observation'] = self.model.preprocess_observation(game_state['observation'])
-            game_state['frames'].append(game_state['observation'])    
+            game_state['frames'].append(game_state['observation'])  
 
 
     def report_play_stats(self, game_state, is_training=True):
@@ -275,34 +300,18 @@ class GameGenerator:
                        frame_rate))
 
 
-    def make_game_state(self):
+    def reset_game_state(self, game_state=None):
         '''
         Initialized game state variables
         '''
 
-        game_state = {
-            'game_start_time': time.time(),
-            'game_done': False,
-            'episode_done': False,
-            'frames': deque(maxlen=self.model.num_frames_per_state),
-            'total_max_q': 0,
-            'iteration': 0,
-            'game_length': 0,
-            'episode_length': 0,
-            'score': 0,
-            'observation': None,
-            'old_state': None,
-            'state': None,
-            'action': 0,
-            'reward': None,
-            'cont': 1,
-            'info': None,
-            'num_lives': None,
-            'actions_render': [],
-            'frames_render': []
-        }        
+        if game_state is None:
+            game_state = {}
+
+        game_state.update(self.GAME_STATE_RESET)
 
         game_state['observation'] = self.model.preprocess_observation(self.env.reset())
+        game_state['frames'] = deque(maxlen=self.model.num_frames_per_state)
         game_state['frames'].append(game_state['observation'])
 
         return game_state
@@ -313,6 +322,8 @@ class GameGenerator:
         Makes a frame state from 4 sequential frames.
         Also saves memories to replay memory
         '''
+
+        # log('update:', game_state['state'] is not None)
 
         # next_state = self.make_state(game_state['frames'])
 

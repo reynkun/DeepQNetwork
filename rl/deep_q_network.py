@@ -301,7 +301,9 @@ class DeepQNetwork:
 
         # initialize run_game step generator
         self.game_generator = GameGenerator(self.conf, self.env, self.agent)
-        self.play_step = self.game_generator.play_generator(is_training=True)
+        self.game_state = self.game_generator.reset_game_state()
+        self.play_step = self.game_generator.play_generator(game_state=self.game_state,
+                                                            is_training=True)
 
         # # batch memory
         # self.train_batch = ReplayMemory(self.agent.input_height,
@@ -457,14 +459,14 @@ class DeepQNetwork:
 
 
     def game_step(self):
-        game_state = next(self.play_step)
+        next(self.play_step)
 
-        if game_state['old_state'] is not None:
-            self.add_memories(state=game_state['old_state'], 
-                              action=game_state['action'], 
-                              reward=game_state['reward'], 
-                              cont=game_state['cont'], 
-                              next_state=game_state['state'])                
+        if self.game_state['old_state'] is not None:
+            self.add_memories(state=self.game_state['old_state'], 
+                              action=self.game_state['action'], 
+                              reward=self.game_state['reward'], 
+                              cont=self.game_state['cont'], 
+                              next_state=self.game_state['state'])                
 
 
 
@@ -556,6 +558,7 @@ class DeepQNetwork:
         self.play_game_scores = deque(maxlen=100)
         self.play_max_qs = deque(maxlen=100)
         self.game_generator = GameGenerator(self.conf, self.env, self.agent)
+        self.game_step = self.game_generator.make_game_state()
         self.play_step = self.game_generator.play_generator(is_training=False,
                                                             num_games=num_games,
                                                             use_epsilon=use_epsilon, 
