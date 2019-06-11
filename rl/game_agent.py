@@ -28,24 +28,24 @@ class GameAgent(Model):
     # class variables.  override for each game
     
     # game screen size / channels
-    input_height = 110
-    input_width = 80
-    input_channels = 4
+    INPUT_HEIGHT = 110
+    INPUT_WIDTH = 80
+    INPUT_CHANNELS = 4
 
     # num of (time) sequential frames to use for learning
     num_frames_per_state = 4
 
     # use convolutional filters. only needs to be false for non-image input
-    use_conv = True
+    USE_CONV = True
 
     # experimental use of auto encoder to compress images
-    use_encoder = False
+    USE_ENCODER = False
 
     # dtype for input
-    state_type = 'uint8'
+    STATE_TYPE = 'uint8'
 
     # num hidden nodes in dense layer
-    num_hidden = 512
+    NUM_HIDDEN = 512
 
 
     def __init__(self, conf, initialize=True):
@@ -75,7 +75,7 @@ class GameAgent(Model):
         }
 
 
-        step, _, losses, loss = self.run([self.step,
+        step, _, losses, loss = self.run([self.training_step,
                                           self.training_op,
                                           self.losses,
                                           self.loss],
@@ -134,12 +134,12 @@ class GameAgent(Model):
         self.copy_online_to_target.run()        
 
 
-    def get_step(self):
+    def get_training_step(self):
         '''
         Increments step and returns new value
         '''
 
-        return self.step.eval()
+        return self.training_step.eval()
         
 
     def set_game_count(self, count):
@@ -175,30 +175,6 @@ class GameAgent(Model):
             return np.argmax(q_values) # optimal action
 
 
-    def preprocess_observation(self, obs):
-        '''
-        Preprocess the image observation.  
-        Override in child class to alter input image
-        '''
-        return obs.reshape(self.input_height, self.input_width, 1)
-
-
-    def render_observation(self, obs):
-        '''
-        Render an image of observation.  Only used for non-image inputs 
-        like cartpole.
-        '''
-        return obs
-
-
-    def before_action(self, action, obs, reward, done, info):
-        '''
-        Do preprocessing before action.  May also change action based
-        on obs, info, etc.
-        '''
-        return action
-
-
     def make_model(self):
         '''
         Construct the tensorflow model
@@ -218,25 +194,25 @@ class GameAgent(Model):
         # save how many games we've played
         self.game_count = tf.Variable(0, trainable=False, name='game_count')
 
-        if self.use_encoder:
+        if self.USE_ENCODER:
             self.X_state = tf.placeholder(tf.float32, shape=[None,
-                                                             self.input_height,
-                                                             self.input_width,
-                                                             self.input_channels])
+                                                             self.INPUT_HEIGHT,
+                                                             self.INPUT_WIDTH,
+                                                             self.INPUT_CHANNELS])
             last = self.X_state
-        elif self.use_conv:
+        elif self.USE_CONV:
             self.X_state = tf.placeholder(tf.uint8, shape=[None, 
-                                                           self.input_height,
-                                                           self.input_width,
-                                                           self.input_channels])
+                                                           self.INPUT_HEIGHT,
+                                                           self.INPUT_WIDTH,
+                                                           self.INPUT_CHANNELS])
             # convert rgb int (0-255) to floats
             last = tf.cast(self.X_state, tf.float32)
             last = tf.divide(last, 255)
         else:
             self.X_state = tf.placeholder(tf.float32, shape=[None, 
-                                                             self.input_height,
-                                                             self.input_width,
-                                                             self.input_channels])
+                                                             self.INPUT_HEIGHT,
+                                                             self.INPUT_WIDTH,
+                                                             self.INPUT_CHANNELS])
             last = self.X_state
 
 
@@ -278,7 +254,7 @@ class GameAgent(Model):
         hidden_initializer = tf.contrib.layers.variance_scaling_initializer()
 
 
-        if self.use_conv:
+        if self.USE_CONV:
             # make convolutional network 
             conv_num_maps = [32, 64, 64]
             # conv_kernel_sizes = [8, 4, 3]
@@ -286,18 +262,18 @@ class GameAgent(Model):
             conv_strides = [4, 2, 1]
             conv_paddings = ['same'] * 3
             conv_activations = [tf.nn.relu] * 3
-            num_hidden = self.num_hidden
-        elif self.use_encoder:
+            num_hidden = self.NUM_HIDDEN
+        elif self.USE_ENCODER:
             # experimental autoencoder network
             conv_num_maps = [64, 64]
             conv_kernel_sizes = [4, 4]
             conv_strides = [2, 1]
             conv_paddings = ['same'] * len(conv_num_maps)
             conv_activations = [tf.nn.relu] * len(conv_num_maps)
-            num_hidden = self.num_hidden
+            num_hidden = self.NUM_HIDDEN
 
         with tf.variable_scope(name) as scope:
-            if self.use_conv or self.use_encoder:
+            if self.USE_CONV or self.USE_ENCODER:
                 # conv layers
                 for num_maps, kernel_size, stride, padding, act_func in zip(conv_num_maps,
                                                                             conv_kernel_sizes,
@@ -381,7 +357,7 @@ class GameAgent(Model):
                 self.loss = tf.reduce_mean(self.huber_losses)
                 self.losses = self.huber_losses
 
-            self.step = tf.Variable(0, 
+            self.training_step = tf.Variable(0, 
                                     trainable=False, 
                                     name='step')
 
@@ -393,88 +369,88 @@ class GameAgent(Model):
                 optimizer = tf.train.AdamOptimizer(self.conf['learning_rate'])
 
             self.training_op = optimizer.minimize(self.loss, 
-                                                  global_step=self.step)
+                                                  global_step=self.training_step)
 
 
 class BreakoutAgent(GameAgent):
-    input_height = 89
-    input_width = 80
-    input_channels = 4
-    use_conv = True
-    compress_ratio = 2
-    game_report_interval = 10
-    num_lives = 0
+    INPUT_HEIGHT = 89
+    INPUT_WIDTH = 80
+    INPUT_CHANNELS = 4
+    USE_CONV = True
+    # compress_ratio = 2
+    # game_report_interval = 10
+    # num_lives = 0
 
 
-    def preprocess_observation(self, img):
-        # crop and cut off score and bottom blank space
-        img = img[16:-16:self.compress_ratio, ::self.compress_ratio] # crop and downsize
-        img = np.dot(img[...,:3], [0.299, 0.587, 0.144])
+    # def preprocess_observation(self, img):
+    #     # crop and cut off score and bottom blank space
+    #     img = img[16:-16:self.compress_ratio, ::self.compress_ratio] # crop and downsize
+    #     img = np.dot(img[...,:3], [0.299, 0.587, 0.144])
 
-        return img.astype('uint8').reshape(self.input_height, self.input_width, 1)
+    #     return img.astype('uint8').reshape(self.INPUT_HEIGHT, self.INPUT_WIDTH, 1)
 
 
-    def before_action(self, action, obs, reward, done, info):
-        # start episode with action 1
-        if info is not None and info['ale.lives'] != self.num_lives:
-            action = 1
-            self.num_lives = info['ale.lives']        
+    # def before_action(self, action, obs, reward, done, info):
+    #     # start episode with action 1
+    #     if info is not None and info['ale.lives'] != self.num_lives:
+    #         action = 1
+    #         self.num_lives = info['ale.lives']        
 
-        return action
+    #     return action
 
 
 class CartPoleAgent(GameAgent):
-    input_height = 2
-    input_width = 2
-    input_channels = 4
-    use_conv = False
-    game_report_interval = 100
-    state_type = 'float32'
+    INPUT_HEIGHT = 2
+    INPUT_WIDTH = 2
+    INPUT_CHANNELS = 4
+    USE_CONV = False
+    # game_report_interval = 100
+    # STATE_TYPE = 'float32'
 
 
-    def render_observation(self, obs):
-        # rendering for the cart pole environment (in case OpenAI gym can't do it)
-        img_w = 600
-        img_h = 400
-        cart_w = img_w // 12
-        cart_h = img_h // 15
-        pole_len = img_h // 3.5
-        pole_w = img_w // 80 + 1
-        x_width = 2
-        max_ang = 0.2
-        bg_col = (255, 255, 255)
-        cart_col = 0x000000 # Blue Green Red
-        pole_col = 0x669acc # Blue Green Red
+    # def render_observation(self, obs):
+    #     # rendering for the cart pole environment (in case OpenAI gym can't do it)
+    #     img_w = 600
+    #     img_h = 400
+    #     cart_w = img_w // 12
+    #     cart_h = img_h // 15
+    #     pole_len = img_h // 3.5
+    #     pole_w = img_w // 80 + 1
+    #     x_width = 2
+    #     max_ang = 0.2
+    #     bg_col = (255, 255, 255)
+    #     cart_col = 0x000000 # Blue Green Red
+    #     pole_col = 0x669acc # Blue Green Red
 
-        pos, vel, ang, ang_vel = obs
-        img = Image.new('RGB', (img_w, img_h), bg_col)
-        draw = ImageDraw.Draw(img)
-        cart_x = pos * img_w // x_width + img_w // x_width
-        cart_y = img_h * 95 // 100
-        top_pole_x = cart_x + pole_len * np.sin(ang)
-        top_pole_y = cart_y - cart_h // 2 - pole_len * np.cos(ang)
-        draw.line((0, cart_y, img_w, cart_y), fill=0)
-        draw.rectangle((cart_x - cart_w // 2, cart_y - cart_h // 2, cart_x + cart_w // 2, cart_y + cart_h // 2), fill=cart_col) # draw cart
-        draw.line((cart_x, cart_y - cart_h // 2, top_pole_x, top_pole_y), fill=pole_col, width=pole_w) # draw pole
+    #     pos, vel, ang, ang_vel = obs
+    #     img = Image.new('RGB', (img_w, img_h), bg_col)
+    #     draw = ImageDraw.Draw(img)
+    #     cart_x = pos * img_w // x_width + img_w // x_width
+    #     cart_y = img_h * 95 // 100
+    #     top_pole_x = cart_x + pole_len * np.sin(ang)
+    #     top_pole_y = cart_y - cart_h // 2 - pole_len * np.cos(ang)
+    #     draw.line((0, cart_y, img_w, cart_y), fill=0)
+    #     draw.rectangle((cart_x - cart_w // 2, cart_y - cart_h // 2, cart_x + cart_w // 2, cart_y + cart_h // 2), fill=cart_col) # draw cart
+    #     draw.line((cart_x, cart_y - cart_h // 2, top_pole_x, top_pole_y), fill=pole_col, width=pole_w) # draw pole
         
-        return np.array(img)
+    #     return np.array(img)
 
 
 class MsPacmanAgent(GameAgent):
-    input_height = 86
-    input_width = 80
-    input_channels = 4
-    use_conv = True
-    compress_ratio = 2
-    game_report_interval = 10
-    num_lives = 0
+    INPUT_HEIGHT = 86
+    INPUT_WIDTH = 80
+    INPUT_CHANNELS = 4
+    USE_CONV = True
+    # compress_ratio = 2
+    # game_report_interval = 10
+    # num_lives = 0
 
 
-    def preprocess_observation(self, img):
-        # cut off score and icons from bottom
-        img = img[0:-38:self.compress_ratio, ::self.compress_ratio] # crop and downsize
-        img = np.dot(img[...,:3], [0.299, 0.587, 0.144])
+    # def preprocess_observation(self, img):
+    #     # cut off score and icons from bottom
+    #     img = img[0:-38:self.compress_ratio, ::self.compress_ratio] # crop and downsize
+    #     img = np.dot(img[...,:3], [0.299, 0.587, 0.144])
 
-        return img.astype('uint8').reshape(self.input_height, self.input_width, 1)
+    #     return img.astype('uint8').reshape(self.INPUT_HEIGHT, self.INPUT_WIDTH, 1)
 
 

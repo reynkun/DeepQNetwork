@@ -11,8 +11,8 @@ parser = argparse.ArgumentParser()
 
 # game agent
 parser.add_argument('-a', '--agent', dest='agent', default='rl.game_agent.BreakoutAgent')
-# game id
-parser.add_argument('-g', '--game-id', dest='game_id', default='Breakout-v0')
+# game environment
+parser.add_argument('-e', '--env', dest='environment', default='rl.game_environment.BreakoutEnvironment')
 parser.add_argument('-m', '--model-save-prefix', dest='model_save_prefix', default=None)
 parser.add_argument('-O', '--dir', '--save-dir', dest='save_dir', default='./data')
 

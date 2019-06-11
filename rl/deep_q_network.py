@@ -11,7 +11,7 @@ import gym
 import tensorflow as tf
 import numpy as np
 
-from .game_generator import GameGenerator
+from .game_runner import GameRunner
 from .utils.logging import init_logging, log
 from .game.render import render_game
 from .data.replay_memory_disk import ReplayMemoryDisk
@@ -28,6 +28,7 @@ def time_string():
 class DeepQNetwork:
     DEFAULT_OPTIONS = {
         'save_dir': './data',
+        'game_id': None,
         'eps_min': 0.1,
         'eps_max': 1.0,
         'eps_decay_steps': 2000000,
@@ -42,7 +43,6 @@ class DeepQNetwork:
         'num_game_frames_before_training': 10000,
         'num_game_steps_per_train': 4,
         'num_train_steps_save_video': None,
-        'game_report_interval': 10,
         'train_report_interval': 100,
         'use_episodes': True,
         'use_dueling': False,
@@ -168,9 +168,9 @@ class DeepQNetwork:
         Set values to instance variables for easier access
         '''
 
-        self.game_id = self.conf['game_id']
+        self.environment = self.conf['environment']
 
-        file_prefix = self.game_id
+        file_prefix = self.environment
         self.save_path_prefix = os.path.join(self.save_dir, file_prefix)
         self.conf['save_path_prefix'] = self.save_path_prefix
 
@@ -193,12 +193,22 @@ class DeepQNetwork:
 
     def init_env(self):
         '''
-        Init open ai gym
+        Initialize game env
         '''
 
-        self.env = gym.make(self.conf['game_id'])
-        self.env.seed(int(time.time()))
-        self.conf['action_space'] = self.env.action_space.n        
+        # make environment
+        if isinstance(self.conf['environment'], str):
+            mod_env_str, cl_env_str = self.conf['environment'].rsplit('.', 1)
+            mod_ag = importlib.import_module(mod_env_str)
+
+            env_class = getattr(mod_ag, cl_env_str)
+        elif inspect.isclass(self.conf['2']):
+            env_class = self.conf['environment']
+        else:
+            raise Exception('invalid env class')
+
+        self.env = env_class(self.conf['game_id'])
+        self.conf['action_space'] = self.env.get_action_space()
 
 
     def init_agent(self):
@@ -268,18 +278,18 @@ class DeepQNetwork:
         self.total_losses = []
 
         # training batch
-        self.train_batch = ReplayMemory(self.agent.input_height,
-                                        self.agent.input_width,
-                                        self.agent.input_channels,
+        self.train_batch = ReplayMemory(self.agent.INPUT_HEIGHT,
+                                        self.agent.INPUT_WIDTH,
+                                        self.agent.INPUT_CHANNELS,
                                         max_size=self.batch_size,
-                                        state_type=self.agent.state_type)
+                                        state_type=self.agent.STATE_TYPE)
 
         # allocate memory
         if self.conf['use_memory']:
-            self.memories = ReplayMemory(self.agent.input_height,
-                                         self.agent.input_width,
-                                         self.agent.input_channels,
-                                         state_type=self.agent.state_type,
+            self.memories = ReplayMemory(self.agent.INPUT_HEIGHT,
+                                         self.agent.INPUT_WIDTH,
+                                         self.agent.INPUT_CHANNELS,
+                                         state_type=self.agent.STATE_TYPE,
                                          max_size=self.replay_max_memory_length)
 
             if os.path.exists(self.get_replay_memory_path()):
@@ -289,10 +299,10 @@ class DeepQNetwork:
                 self.memories.extend(old_memories)
         else:
             self.memories = ReplayMemoryDisk(self.get_replay_memory_path(),
-                                             self.agent.input_height,
-                                             self.agent.input_width,
-                                             self.agent.input_channels,
-                                             state_type=self.agent.state_type,
+                                             self.agent.INPUT_HEIGHT,
+                                             self.agent.INPUT_WIDTH,
+                                             self.agent.INPUT_CHANNELS,
+                                             state_type=self.agent.STATE_TYPE,
                                              max_size=self.replay_max_memory_length,
                                              cache_size=self.conf['replay_cache_size'])
 
@@ -300,17 +310,15 @@ class DeepQNetwork:
 
 
         # initialize run_game step generator
-        self.game_generator = GameGenerator(self.conf, self.env, self.agent)
-        self.game_state = self.game_generator.reset_game_state()
-        self.play_step = self.game_generator.play_generator(game_state=self.game_state,
-                                                            is_training=True)
+        self.game_runner = GameRunner(self.conf, self.env, self.agent)
+        self.play_step = self.game_runner.play_generator()
 
         # # batch memory
-        # self.train_batch = ReplayMemory(self.agent.input_height,
-        #                                self.agent.input_width,
-        #                                self.agent.input_channels,
+        # self.train_batch = ReplayMemory(self.agent.INPUT_HEIGHT,
+        #                                self.agent.INPUT_WIDTH,
+        #                                self.agent.INPUT_CHANNELS,
         #                                max_size=self.batch_size,
-        #                                state_type=self.agent.state_type)
+        #                                state_type=self.agent.STATE_TYPE)
 
         # fill replay memory when first starting training
         if len(self.replay_sampler) < self.num_game_frames_before_training:
@@ -380,7 +388,7 @@ class DeepQNetwork:
 
         # And save regularly
         if self.step % self.save_steps == 0:
-            self.agent.set_game_count(self.game_generator.total_game_count)
+            self.agent.set_game_count(self.game_runner.total_game_count)
             self.agent.save(self.save_path_prefix)
 
 
@@ -397,11 +405,11 @@ class DeepQNetwork:
                                    display=False,
                                    save_video=True):
                 # pass
-                self.add_memories(state=game_state['state'], 
-                                  action=game_state['action'], 
-                                  reward=game_state['reward'], 
-                                  cont=cont, 
-                                  next_state=next_state)
+                self.add_memories(state=self.game_runner.game_state['next_state'], 
+                                  action=self.game_runner.game_state['action'], 
+                                  reward=self.game_runner.game_state['reward'], 
+                                  cont=self.game_runner.game_state['cont'], 
+                                  next_state=self.game_runner.game_state['state'])
 
 
     def train_report_stats(self):
@@ -439,10 +447,10 @@ class DeepQNetwork:
         if self.conf['use_memory']:
             log('saving', len(self.memories), 'memories to disk')
             old_memories = ReplayMemoryDisk(self.get_replay_memory_path(),
-                                            self.agent.input_height,
-                                            self.agent.input_width,
-                                            self.agent.input_channels,
-                                            state_type=self.agent.state_type,
+                                            self.agent.INPUT_HEIGHT,
+                                            self.agent.INPUT_WIDTH,
+                                            self.agent.INPUT_CHANNELS,
+                                            state_type=self.agent.STATE_TYPE,
                                             max_size=self.replay_max_memory_length,
                                             cache_size=0)
 
@@ -454,19 +462,19 @@ class DeepQNetwork:
             self.replay_sampler.close()
 
         # save game count
-        self.agent.set_game_count(self.game_generator.total_game_count)
+        self.agent.set_game_count(self.game_runner.total_game_count)
         self.agent.save(self.save_path_prefix)
 
 
     def game_step(self):
         next(self.play_step)
 
-        if self.game_state['old_state'] is not None:
-            self.add_memories(state=self.game_state['old_state'], 
-                              action=self.game_state['action'], 
-                              reward=self.game_state['reward'], 
-                              cont=self.game_state['cont'], 
-                              next_state=self.game_state['state'])                
+        if self.game_runner.game_state['old_state'] is not None:
+            self.add_memories(state=self.game_runner.game_state['old_state'], 
+                              action=self.game_runner.game_state['action'], 
+                              reward=self.game_runner.game_state['reward'], 
+                              cont=self.game_runner.game_state['cont'], 
+                              next_state=self.game_runner.game_state['state'])                
 
 
 
@@ -547,21 +555,29 @@ class DeepQNetwork:
         '''
 
         # batch memory
-        self.train_batch = ReplayMemory(self.agent.input_height,
-                                        self.agent.input_width,
-                                        self.agent.input_channels,
+        self.train_batch = ReplayMemory(self.agent.INPUT_HEIGHT,
+                                        self.agent.INPUT_WIDTH,
+                                        self.agent.INPUT_CHANNELS,
                                         max_size=self.conf['batch_size'],
-                                        state_type=self.agent.state_type)
+                                        state_type=self.agent.STATE_TYPE)
 
 
         # reporting stats
         self.play_game_scores = deque(maxlen=100)
         self.play_max_qs = deque(maxlen=100)
-        self.game_generator = GameGenerator(self.conf, self.env, self.agent)
-        self.game_step = self.game_generator.make_game_state()
-        self.play_step = self.game_generator.play_generator(is_training=False,
-                                                            num_games=num_games,
-                                                            use_epsilon=use_epsilon, 
-                                                            display=display, 
-                                                            save_video=save_video)
+
+        # is_training=False,
+        #                                                     num_games=num_games,
+        #                                                     use_epsilon=use_epsilon, 
+        #                                                     display=display, 
+        #                                                     save_video=save_vide
+        self.conf.update({
+            'is_training': False,
+            'use_epsilon': use_epsilon,
+            'display': display,
+            'save_video': save_video
+        })
+
+        self.game_runner = GameRunner(self.conf, self.env, self.agent)
+        self.play_step = self.game_runner.play_generator()
 
