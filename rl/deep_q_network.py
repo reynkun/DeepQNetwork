@@ -150,12 +150,16 @@ class DeepQNetwork:
             for fn in os.listdir(self.save_dir):
                 if fn.endswith('.conf'):
                     with open(os.path.join(self.save_dir, fn)) as fin:
+                        log('init_conf2.1', fn)
                         self.conf = json.load(fin)
                         has_conf = True
                         break
 
+            log('init_conf3')
+
             if not has_conf:
                 raise Exception('no conf file found')        
+
 
         # override saved conf with parameters
         for key, value in conf.items():
@@ -268,7 +272,7 @@ class DeepQNetwork:
         self.discount_rate = self.conf['discount_rate']
 
         # other vars
-        self.step = self.agent.get_step()
+        self.step = self.agent.get_training_step()
 
         # # other vars
         # self.step = self.agent.step.eval()
@@ -482,22 +486,30 @@ class DeepQNetwork:
         '''
         Add to replay memories
         '''
-        self.train_batch.append(state=state,
-                                action=action,
-                                reward=reward,
-                                cont=cont,
-                                next_state=next_state)
+        # self.train_batch.append(state=state,
+        #                         action=action,
+        #                         reward=reward,
+        #                         cont=cont,
+        #                         next_state=next_state)
 
-        if len(self.train_batch) >= self.batch_size:
-            for i in range(len(self.train_batch)):
-                self.replay_sampler.append(state=self.train_batch.states[i],
-                                           action=self.train_batch.actions[i],
-                                           reward=self.train_batch.rewards[i],
-                                           next_state=self.train_batch.next_states[i],
-                                           cont=self.train_batch.continues[i],
-                                           loss=0)
+        # if len(self.train_batch) >= self.batch_size:
+        #     for i in range(len(self.train_batch)):
+        #         self.replay_sampler.append(state=self.train_batch.states[i],
+        #                                    action=self.train_batch.actions[i],
+        #                                    reward=self.train_batch.rewards[i],
+        #                                    next_state=self.train_batch.next_states[i],
+        #                                    cont=self.train_batch.continues[i],
+        #                                    loss=0)
 
-            self.train_batch.clear()
+        #     self.train_batch.clear()
+
+
+        self.replay_sampler.append(state=state,
+                                   action=action,
+                                   reward=reward,
+                                   next_state=next_state,
+                                   cont=cont,
+                                   loss=0)
 
 
     def sample_memories(self):
@@ -546,7 +558,7 @@ class DeepQNetwork:
 
 
             except KeyboardInterrupt:
-                log('play interrupted2')
+                log('play interrupted')
 
 
     def play_init(self, num_games=10, use_epsilon=False, display=False, save_video=False):

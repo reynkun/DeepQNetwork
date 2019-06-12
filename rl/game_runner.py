@@ -1,3 +1,4 @@
+import os
 import time
 import numpy as np
 
@@ -16,7 +17,8 @@ class GameRunner:
         'is_training': True,
         'use_epsilon': False,
         'display': False,
-        'save_video': False
+        'save_video': False,
+        'save_dir': None
     }
 
     GAME_STATE_RESET = {
@@ -51,7 +53,7 @@ class GameRunner:
 
         # override saved conf with parameters
         for key, value in conf.items():
-            if value is not None and key in self.conf:
+            if value is not None:
                 self.conf[key] = value
 
 
@@ -233,7 +235,8 @@ class GameRunner:
                     break
 
             self.game_state['score'] += self.game_state['reward']
-            self.game_state['frames'].append(self.game_state['observation'])  
+            # self.game_state['observation'] = self.env.preprocess_observation(self.game_state['observation'])
+            self.game_state['frames'].append(self.game_state['observation'])
 
 
     def _decide_action(self):
@@ -252,9 +255,9 @@ class GameRunner:
         # run step
         self.game_state['observation'], step_reward, self.game_state['game_done'], self.game_state['info'] = self.env.step(self.game_state['action'])
 
-        if not self.is_training and (self.conf['save_video'] or self.con['display']):
+        if not self.is_training and (self.conf['save_video'] or self.conf['display']):
             self.game_state['actions_render'].append(self.game_state['action'])
-            self.game_state['frames_render'].append(self.env.render_observation(self.game_state['observation']))
+            self.game_state['frames_render'].append(self.env.render_observation(self.env.raw_obs))
 
         self.game_state['reward'] += step_reward
 
@@ -279,9 +282,9 @@ class GameRunner:
         return True
 
 
-    def _render_game():
+    def _render_game(self):
         if self.conf['save_video']:
-            save_path = os.path.join(self.save_dir,
+            save_path = os.path.join(self.conf['save_dir'],
                                      'video-{}-{}.mp4'.format(self.training_step,
                                                               self.total_game_count))
         else:
@@ -301,6 +304,8 @@ class GameRunner:
         '''
 
         self.game_state.update(self.GAME_STATE_RESET)
+
+        self.game_state['game_start_time'] = time.time()
         self.game_state['observation'] = self.env.reset()
         # self.game_state['observation'] = self.env.preprocess_observation(self.env.reset())
         self.game_state['frames'] = deque(maxlen=self.model.num_frames_per_state)

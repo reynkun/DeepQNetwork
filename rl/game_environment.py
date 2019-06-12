@@ -4,7 +4,7 @@ import numpy as np
 
 
 class GameEnvironment:
-    def __init__(self, game_id=None):
+    def __init__(self, game_id=None, preprocess=True):
         if game_id is not None:
             self.env = gym.make(game_id)
         else:
@@ -18,12 +18,14 @@ class GameEnvironment:
 
     
     def step(self, *args, **kwargs):
-        obs, reward, done, info = self.env.step(*args, **kwargs)
+        # return self.env.step(*args, **kwargs)
+        self.raw_obs, reward, done, info = self.env.step(*args, **kwargs)
 
-        return self.preprocess_observation(obs), reward, done, info
+        return self.preprocess_observation(self.raw_obs), reward, done, info
 
 
     def reset(self):
+        # return self.env.reset()
         return self.preprocess_observation(self.env.reset())
 
 
