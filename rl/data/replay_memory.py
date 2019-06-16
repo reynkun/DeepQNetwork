@@ -3,6 +3,10 @@ import random
 
 
 class ReplayMemory:
+    '''
+    Stores replay in memory
+    '''
+
     MAX_SIZE = 10000
     STATE_TYPE = 'uint8'
 

@@ -2,10 +2,15 @@ import logging
 
 from logging.handlers import TimedRotatingFileHandler
 
+
 logger = None
 
 
 def init_logging(save_path_prefix, add_std_err=True):
+    '''
+    Initialize singleton style logger
+    '''
+
     global logger
     if logger:
         return logger
@@ -30,6 +35,10 @@ def init_logging(save_path_prefix, add_std_err=True):
 
 
 def log(*mesg):
+    '''
+    Log a message
+    '''
+
     global logger
 
     if logger:

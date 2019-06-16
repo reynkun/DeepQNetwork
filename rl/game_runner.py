@@ -5,10 +5,15 @@ import numpy as np
 from collections import deque
 
 from .utils.logging import log
-from .utils.render import render_game
+from .utils.render import render_game, render_state
 
 
 class GameRunner:
+    '''
+    Runs the game with given model and environment.  Has generator style
+    accessors for steping through the game.
+    '''
+
     DEFAULT_OPTIONS = {
         'frame_skip': 1,
         'use_episodes': True,
@@ -38,8 +43,8 @@ class GameRunner:
         'cont': 1,
         'info': None,
         'num_lives': None,
-        'actions_render': [],
-        'frames_render': []
+        'frames_render': [],
+        'infos_render': [],
     }   
 
 
@@ -62,7 +67,7 @@ class GameRunner:
         Generator which will run the game one frame
         '''
 
-        self.play_init()
+        self._play_init()
 
         try:
             while self.conf['num_games'] is None or self.cur_game_count < self.conf['num_games']:
@@ -73,34 +78,20 @@ class GameRunner:
             log('play interrupted')
 
 
-    def play_init(self):
+    def _play_init(self):
         '''
         Initialize play variables
         '''
 
         # run game settings
-        # self.eps_min = self.conf['eps_min']
-        # self.eps_max = self.conf['eps_max']
-        # self.eps_decay_steps = self.conf['eps_decay_steps']
-        # self.discount_rate = self.conf['discount_rate']
         self.use_episodes = self.conf['use_episodes']
         self.frame_skip = self.conf['frame_skip']
         self.max_game_length = self.conf['max_game_length']
         self.is_training = self.conf['is_training']
         self.use_epsilon = self.conf['use_epsilon']
-        # self.batch_size = self.conf['batch_size']
-
-        # self.total_game_count = self.session.run([self.model.game_count])[0]
         self.total_game_count = self.model.get_game_count()
         self.cur_game_count = 0
         self.training_step = self.model.get_training_step()
-
-        # # batch memory
-        # self.play_batch = ReplayMemory(self.model.input_height,
-        #                                self.model.input_width,
-        #                                self.model.input_channels,
-        #                                max_size=self.batch_size,
-        #                                state_type=self.model.state_type)
 
 
         # reporting stats
@@ -180,13 +171,14 @@ class GameRunner:
 
             epsilon = self.model.epsilon(self.training_step)
 
-            log('[play] step {} game {}/{} len: {:d} max_q: {:0.3f}/{:0.3f} score: {:0.1f}/{:0.1f}/{:0.1f} eps: {:0.3f} fr: {:0.1f}'.format(
+            log('[play] step {} game {}/{} len: {:d} max_q: {:0.3f}/{:0.3f} score: {:0.1f}/{:0.1f}/{:0.1f}/{:0.1f} eps: {:0.3f} fr: {:0.1f}'.format(
                        self.training_step,
                        self.cur_game_count,
                        self.total_game_count,
                        self.game_state['game_length'],
                        mean_max_q,
                        avg_max_q,
+                       self.game_state['score'],
                        avg_score,
                        min_score,
                        max_score,
@@ -212,7 +204,7 @@ class GameRunner:
                 break
 
             # get next action 
-            if len(self.game_state['frames']) >= self.model.num_frames_per_state:
+            if len(self.game_state['frames']) >= self.model.NUM_FRAMES_PER_STATE:
                 self.game_state['cont'] = 1
                 self._update_frame_state()
 
@@ -221,13 +213,6 @@ class GameRunner:
 
                 self._decide_action()
 
-            # override action for certain states (start of game/episode, etc.)
-            self.game_state['action'] = self.env.before_action(self.game_state['action'], 
-                                                               self.game_state['observation'], 
-                                                               self.game_state['reward'], 
-                                                               self.game_state['game_done'], 
-                                                               self.game_state['info'])
-
             # run action for frame_skip steps
             self.game_state['reward'] = 0
             for _ in range(self.frame_skip):
@@ -235,15 +220,20 @@ class GameRunner:
                     break
 
             self.game_state['score'] += self.game_state['reward']
-            # self.game_state['observation'] = self.env.preprocess_observation(self.game_state['observation'])
             self.game_state['frames'].append(self.game_state['observation'])
 
 
     def _decide_action(self):
+        '''
+        Decide which action to do.  Uses epsilon if still training, 
+        otherwise return the action with max q value
+        '''
+
         # Online DQN evaluates what to do
         q_values = self.model.predict([self.game_state['state']])
 
         self.game_state['total_max_q'] += q_values.max()
+
 
         if self.is_training or self.use_epsilon:
             self.game_state['action'] = self.model.epsilon_greedy(q_values, self.training_step)
@@ -252,12 +242,13 @@ class GameRunner:
 
 
     def _run_game_step(self):
+        '''
+        Run one game step and add up rewards.
+        Checks for when episodes are finished
+        '''
+
         # run step
         self.game_state['observation'], step_reward, self.game_state['game_done'], self.game_state['info'] = self.env.step(self.game_state['action'])
-
-        if not self.is_training and (self.conf['save_video'] or self.conf['display']):
-            self.game_state['actions_render'].append(self.game_state['action'])
-            self.game_state['frames_render'].append(self.env.render_observation(self.env.raw_obs))
 
         self.game_state['reward'] += step_reward
 
@@ -273,6 +264,15 @@ class GameRunner:
 
             self.game_state['num_lives'] = num_lives
 
+        
+        if not self.is_training and (self.conf['save_video'] or self.conf['display']):
+            self.game_state['frames_render'].append(self.env.render_observation(self.env.raw_obs))
+            self.game_state['infos_render'].append({
+                                                      'a': self.game_state['action'],
+                                                      'c': not (self.game_state['episode_done'] or self.game_state['game_done']),
+                                                      'r': self.game_state['reward']
+                                                  })
+
         if self.game_state['game_done']:
             return False
 
@@ -283,6 +283,9 @@ class GameRunner:
 
 
     def _render_game(self):
+        '''
+        Renders the game to either video or to the display 
+        '''
         if self.conf['save_video']:
             save_path = os.path.join(self.conf['save_dir'],
                                      'video-{}-{}.mp4'.format(self.training_step,
@@ -292,8 +295,9 @@ class GameRunner:
 
         if self.conf['save_video'] or self.conf['display']:
             render_game(self.game_state['frames_render'],
-                        self.game_state['actions_render'],
+                        self.game_state['infos_render'],
                         repeat=False,
+                        interval=self.conf['interval'],
                         save_path=save_path,
                         display=self.conf['display'])         
 
@@ -305,11 +309,10 @@ class GameRunner:
 
         self.game_state.update(self.GAME_STATE_RESET)
 
-        self.game_state['game_start_time'] = time.time()
         self.game_state['observation'] = self.env.reset()
-        # self.game_state['observation'] = self.env.preprocess_observation(self.env.reset())
-        self.game_state['frames'] = deque(maxlen=self.model.num_frames_per_state)
+        self.game_state['frames'] = deque(maxlen=self.model.NUM_FRAMES_PER_STATE)
         self.game_state['frames'].append(self.game_state['observation'])
+        
 
 
     def _update_frame_state(self):
@@ -318,20 +321,23 @@ class GameRunner:
         Also saves memories to replay memory
         '''
 
-        # log('update:', game_state['state'] is not None)
-
-        # next_state = self.make_state(game_state['frames'])
-
-        # if self.is_training and game_state['state'] is not None:
-        #     self.add_memories(state=game_state['state'], 
-        #                       action=game_state['action'], 
-        #                       reward=game_state['reward'], 
-        #                       cont=cont, 
-        #                       next_state=next_state)
-
         self.game_state['old_state'] = self.game_state['state']
         self.game_state['state'] = np.concatenate(self.game_state['frames'], axis=2)
 
 
-    # def make_state(self, frames):
-    #     return np.concatenate(frames, axis=2)
+    def _render_state_action(self):
+        '''
+        For debug purposes
+        '''
+
+        try:
+            self.counter
+        except AttributeError:
+            self.counter = 0
+        
+        if self.counter % 20 == 0:
+            log(self.counter, self.game_state['action'])
+            render_state(self.game_state['state'])
+            log(q_values)
+
+        self.counter += 1

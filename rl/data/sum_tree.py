@@ -2,6 +2,10 @@ import numpy as np
 
 
 class SumTree:
+    '''
+    Implements sum tree
+    '''
+
     write = 0
 
     def __init__(self, capacity, dtype='uint32'):

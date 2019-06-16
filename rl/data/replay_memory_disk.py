@@ -9,6 +9,10 @@ from .replay_memory import ReplayMemory
 
 
 class ReplayMemoryDisk:
+    '''
+    Stores replay on disk
+    '''
+
     MAX_SIZE = 2000000
     CACHE_SIZE = 350000
 

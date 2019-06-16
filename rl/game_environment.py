@@ -2,9 +2,16 @@ import gym
 import time
 import numpy as np
 
+from PIL import Image, ImageFont, ImageDraw
+
 
 class GameEnvironment:
-    def __init__(self, game_id=None, preprocess=True):
+    '''
+    Wraps the environment class.  Provides hooks
+    for game specific tweaks
+    '''
+
+    def __init__(self, game_id=None, do_preprocess=True, do_before_action=True):
         if game_id is not None:
             self.env = gym.make(game_id)
         else:
@@ -12,24 +19,52 @@ class GameEnvironment:
 
         self.env.seed(int(time.time()))
 
+        self.do_preprocess = do_preprocess
+        self.do_before_action = do_before_action
+
+        self.raw_obs = None
+        self.reward = None
+        self.done = None
+        self.info = None
+
 
     def get_action_space(self):
+        '''
+        Get the available actions for environment
+        '''
         return self.env.action_space.n
 
     
-    def step(self, *args, **kwargs):
+    def step(self, action):
+        '''
+        Run one step.  Also check before_action if possible
+        '''
         # return self.env.step(*args, **kwargs)
-        self.raw_obs, reward, done, info = self.env.step(*args, **kwargs)
+        if self.do_before_action:
+            action = self.before_action(action, self.raw_obs, self.reward, self.done, self.info)
 
-        return self.preprocess_observation(self.raw_obs), reward, done, info
+        self.raw_obs, self.reward, self.done, self.info = self.env.step(action)
+
+        if self.do_preprocess:
+            return self.preprocess_observation(self.raw_obs), self.reward, self.done, self.info
+        else:
+            return self.raw_obs, self.reward, self.done, self.info
 
 
     def reset(self):
-        # return self.env.reset()
-        return self.preprocess_observation(self.env.reset())
+        '''
+        Resets game
+        '''
+        if self.do_preprocess:
+            return self.preprocess_observation(self.env.reset())
+        else:
+            return env.reset()
 
 
     def preprocess_observation(obs):
+        '''
+        Preprocess the observation.  Use to save space in memory
+        '''
         return obs
 
 
@@ -42,11 +77,15 @@ class GameEnvironment:
 
 
     def before_action(self, action, obs, reward, done, info):
+        '''
+        Run before action to possibly override action based on the
+        current game state
+        '''
         return action
 
 
 class BreakoutEnvironment(GameEnvironment):
-    GAME_ID = 'Breakout-v0'
+    GAME_ID = 'BreakoutDeterministic-v4'
     COMPRESS_RATIO = 2
     GAME_REPORT_INTERVAL = 10
     INPUT_HEIGHT = 89
@@ -105,12 +144,32 @@ class CartPoleEnvironment(GameEnvironment):
         return np.array(img)
 
 
+class SpaceInvadersEnvironment(GameEnvironment):
+    GAME_ID = 'SpaceInvadersDeterministic-v4'
+    COMPRESS_RATIO = 2
+    GAME_REPORT_INTERVAL = 10
+    INPUT_HEIGHT = 89
+    INPUT_WIDTH = 80
+
+
+    def preprocess_observation(self, img):
+        # crop and cut off score and bottom blank space
+        img = img[20:-12:self.COMPRESS_RATIO, ::self.COMPRESS_RATIO] # crop and downsize
+        img = np.dot(img[...,:3], [0.299, 0.587, 0.144])
+
+        return img.astype('uint8').reshape(self.INPUT_HEIGHT, self.INPUT_WIDTH, 1)
+
+
 class MsPacmanEnvironment(GameEnvironment):
-    GAME_ID = 'Cartpole-v0'
+    GAME_ID = 'MsPacmanDeterministic-v4'
     COMPRESS_RATIO = 2
     GAME_REPORT_INTERVAL = 10
     INPUT_HEIGHT = 86
     INPUT_WIDTH = 80
+
+    ACTION_NOTHING = 1
+
+    num_lives = 0
 
 
     def preprocess_observation(self, img):
@@ -121,3 +180,21 @@ class MsPacmanEnvironment(GameEnvironment):
         return img.astype('uint8').reshape(self.INPUT_HEIGHT, self.INPUT_WIDTH, 1)
 
 
+    def before_action(self, action, obs, reward, done, info):
+        # start episode with action 0
+        if info is not None and info['ale.lives'] != self.num_lives:
+            self.num_lives = info['ale.lives']        
+
+            action = self.ACTION_NOTHING
+
+            # skip intro time at start of game
+            if self.num_lives == 3:
+                for i in range(90):
+                    self.env.step(self.ACTION_NOTHING)
+            else:
+                # skip time between death
+                for i in range(30):
+                    self.env.step(self.ACTION_NOTHING)
+
+        # print('action:', action)
+        return action

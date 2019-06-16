@@ -2,6 +2,10 @@ import random
 
 
 class ReplaySampler:
+    '''
+    Samples memories from replay memory
+    '''
+
     def __init__(self, replay_memory):
         self.replay_memory = replay_memory
 

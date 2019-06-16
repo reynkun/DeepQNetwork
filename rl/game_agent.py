@@ -11,7 +11,7 @@ from .model.model import Model
 
 class GameAgent(Model):
     '''
-    Creates the Game Agent and its tf network
+    Builds the tensorflow model for the game agent.
     '''
 
     DEFAULT_OPTIONS = {
@@ -32,9 +32,6 @@ class GameAgent(Model):
     INPUT_WIDTH = 80
     INPUT_CHANNELS = 4
 
-    # num of (time) sequential frames to use for learning
-    num_frames_per_state = 4
-
     # use convolutional filters. only needs to be false for non-image input
     USE_CONV = True
 
@@ -46,6 +43,8 @@ class GameAgent(Model):
 
     # num hidden nodes in dense layer
     NUM_HIDDEN = 512
+
+    NUM_FRAMES_PER_STATE = 4
 
 
     def __init__(self, conf, initialize=True):
@@ -124,13 +123,17 @@ class GameAgent(Model):
         '''
 
         return self.run([self.abs_losses],
-                                feed_dict={
-                                    self.X_state: X_states,
-                                    self.X_action: actions,
-                                    self.y: max_q_values
-                                })[0]
+                        feed_dict={
+                            self.X_state: X_states,
+                            self.X_action: actions,
+                            self.y: max_q_values
+                        })[0]
 
     def copy_network(self):
+        '''
+        copy online network to the target network
+        '''
+
         self.copy_online_to_target.run()        
 
 
@@ -180,6 +183,15 @@ class GameAgent(Model):
         Construct the tensorflow model
         '''
 
+        self._make_inputs()
+        self._make_network()
+        self._make_train()
+
+
+    def _make_inputs(self):
+        '''
+        Make inputs 
+        '''        
         # set placeholders
         self.X_action = tf.placeholder(tf.uint8, shape=[None], name='action')
 
@@ -194,33 +206,32 @@ class GameAgent(Model):
         # save how many games we've played
         self.game_count = tf.Variable(0, trainable=False, name='game_count')
 
-        if self.USE_ENCODER:
-            self.X_state = tf.placeholder(tf.float32, shape=[None,
-                                                             self.INPUT_HEIGHT,
-                                                             self.INPUT_WIDTH,
-                                                             self.INPUT_CHANNELS])
-            last = self.X_state
-        elif self.USE_CONV:
+        if self.USE_CONV:
+            # regular image input
             self.X_state = tf.placeholder(tf.uint8, shape=[None, 
                                                            self.INPUT_HEIGHT,
                                                            self.INPUT_WIDTH,
                                                            self.INPUT_CHANNELS])
             # convert rgb int (0-255) to floats
             last = tf.cast(self.X_state, tf.float32)
-            last = tf.divide(last, 255)
+            self.input = tf.divide(last, 255)
         else:
+            # allow for float input 
             self.X_state = tf.placeholder(tf.float32, shape=[None, 
                                                              self.INPUT_HEIGHT,
                                                              self.INPUT_WIDTH,
                                                              self.INPUT_CHANNELS])
-            last = self.X_state
+            self.input = self.X_state
 
+
+    def _make_network(self):
+        '''
+        Make main network 
+        '''
 
         # make online and target q networks
-        self.online_q_values, self.online_actions, online_vars = self.make_q_network(last, name='q_networks/online')
-        self.target_q_values, self.target_actions, target_vars = self.make_q_network(last, name='q_networks/target')
-
-
+        self.online_q_values, self.online_actions, online_vars = self._make_q_network(self.input, name='q_networks/online')
+        self.target_q_values, self.target_actions, target_vars = self._make_q_network(self.input, name='q_networks/target')
 
 
         if self.conf['use_double']:
@@ -241,10 +252,8 @@ class GameAgent(Model):
 
         self.copy_online_to_target = tf.group(*copy_ops)
 
-        self.make_train()
 
-
-    def make_q_network(self, X_input, name):
+    def _make_q_network(self, X_input, name):
         '''
         Makes the core q network 
         '''
@@ -336,7 +345,7 @@ class GameAgent(Model):
 
 
 
-    def make_train(self):
+    def _make_train(self):
         '''
         Make training tensors
         '''
@@ -377,26 +386,6 @@ class BreakoutAgent(GameAgent):
     INPUT_WIDTH = 80
     INPUT_CHANNELS = 4
     USE_CONV = True
-    # compress_ratio = 2
-    # game_report_interval = 10
-    # num_lives = 0
-
-
-    # def preprocess_observation(self, img):
-    #     # crop and cut off score and bottom blank space
-    #     img = img[16:-16:self.compress_ratio, ::self.compress_ratio] # crop and downsize
-    #     img = np.dot(img[...,:3], [0.299, 0.587, 0.144])
-
-    #     return img.astype('uint8').reshape(self.INPUT_HEIGHT, self.INPUT_WIDTH, 1)
-
-
-    # def before_action(self, action, obs, reward, done, info):
-    #     # start episode with action 1
-    #     if info is not None and info['ale.lives'] != self.num_lives:
-    #         action = 1
-    #         self.num_lives = info['ale.lives']        
-
-    #     return action
 
 
 class CartPoleAgent(GameAgent):
@@ -404,36 +393,13 @@ class CartPoleAgent(GameAgent):
     INPUT_WIDTH = 2
     INPUT_CHANNELS = 4
     USE_CONV = False
-    # game_report_interval = 100
-    # STATE_TYPE = 'float32'
 
 
-    # def render_observation(self, obs):
-    #     # rendering for the cart pole environment (in case OpenAI gym can't do it)
-    #     img_w = 600
-    #     img_h = 400
-    #     cart_w = img_w // 12
-    #     cart_h = img_h // 15
-    #     pole_len = img_h // 3.5
-    #     pole_w = img_w // 80 + 1
-    #     x_width = 2
-    #     max_ang = 0.2
-    #     bg_col = (255, 255, 255)
-    #     cart_col = 0x000000 # Blue Green Red
-    #     pole_col = 0x669acc # Blue Green Red
-
-    #     pos, vel, ang, ang_vel = obs
-    #     img = Image.new('RGB', (img_w, img_h), bg_col)
-    #     draw = ImageDraw.Draw(img)
-    #     cart_x = pos * img_w // x_width + img_w // x_width
-    #     cart_y = img_h * 95 // 100
-    #     top_pole_x = cart_x + pole_len * np.sin(ang)
-    #     top_pole_y = cart_y - cart_h // 2 - pole_len * np.cos(ang)
-    #     draw.line((0, cart_y, img_w, cart_y), fill=0)
-    #     draw.rectangle((cart_x - cart_w // 2, cart_y - cart_h // 2, cart_x + cart_w // 2, cart_y + cart_h // 2), fill=cart_col) # draw cart
-    #     draw.line((cart_x, cart_y - cart_h // 2, top_pole_x, top_pole_y), fill=pole_col, width=pole_w) # draw pole
-        
-    #     return np.array(img)
+class SpaceInvadersAgent(GameAgent):
+    INPUT_HEIGHT = 89
+    INPUT_WIDTH = 80
+    INPUT_CHANNELS = 4
+    USE_CONV = True
 
 
 class MsPacmanAgent(GameAgent):
@@ -441,16 +407,4 @@ class MsPacmanAgent(GameAgent):
     INPUT_WIDTH = 80
     INPUT_CHANNELS = 4
     USE_CONV = True
-    # compress_ratio = 2
-    # game_report_interval = 10
-    # num_lives = 0
-
-
-    # def preprocess_observation(self, img):
-    #     # cut off score and icons from bottom
-    #     img = img[0:-38:self.compress_ratio, ::self.compress_ratio] # crop and downsize
-    #     img = np.dot(img[...,:3], [0.299, 0.587, 0.144])
-
-    #     return img.astype('uint8').reshape(self.INPUT_HEIGHT, self.INPUT_WIDTH, 1)
-
-
+ 

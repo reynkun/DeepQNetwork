@@ -11,41 +11,60 @@ from ..utils.logging import log
 class Model:
     '''
     Model handles the complexities of the tensorflow setup and tear down.
-    Also adds model saving and loading
+    Also adds model (auto) saving and loading
     '''
+
+    DEFAULT_OPTIONS = {
+        'save_path_prefix': None
+    }
 
     def __init__(self, 
                  conf, 
-                #  init_env=True, 
                  init_model=False, 
                  load_model=True,
                  save_model=False):
         self.conf = conf
-        # self.init_env = init_env
         self.init_model = init_model
         self.load_model = load_model
         self.save_model = save_model
 
 
     def __enter__(self):
+        '''
+        Allow for with statement
+        '''
         return self.open()
 
 
     def __exit__(self, ty, value, tb):
+        '''
+        Allow for with statement
+        '''
         self.close(ty, value, tb)
 
 
     def run(self, *args, **kwargs):
+        '''
+        Runs a tf operation
+        '''
         return self._sess.run(*args, **kwargs)
 
 
     def save(self, save_path_prefix):
+        '''
+        Saves the model
+        '''
+
         log('saving model: ', save_path_prefix)
         self.saver.save(self._sess, save_path_prefix)
         log('saved model')
 
 
     def restore(self, save_path_prefix):
+        '''
+        Restores the model
+        '''
+
         if not os.path.exists(save_path_prefix + '.index'):
             log('  model does not exist:', save_path_prefix)
             return False
@@ -58,40 +77,32 @@ class Model:
 
 
     def open(self):
+        '''
+        Initializes the model
+        '''
         log('creating new session load_model:', self.load_model, 'save_model:', self.save_model)
 
-        # if self.init_env:
-        #     self.env = gym.make(self.conf['game_id'])
-        #     self.env.seed(int(time.time()))
-        #     self.conf['action_space'] = self.env.action_space.n
-
         tf.reset_default_graph()
-
-        # # make agent
-        # if isinstance(self.conf['agent'], str):
-        #     mod_agent_str, cl_agent_str = self.conf['agent'].rsplit('.', 1)
-        #     mod_ag = importlib.import_module(mod_agent_str)
-
-        #     agent_class = getattr(mod_ag, cl_agent_str)
-        # elif inspect.isclass(self.conf['agent']):
-        #     agent_class = self.conf['agent']
-        # else:
-        #     raise Exception('invalid agent class')
 
         if self.init_model:
             self.make_model()
 
-        self.init_tf()
-
+        self._init_tf()
 
         return self
 
 
     def make_model():
+        '''
+        Makes the actual model.  Subclass should override
+        '''
         raise NotImplementedError
 
 
-    def init_tf(self):
+    def _init_tf(self):
+        '''
+        Runs tensorflow specific setup
+        '''
         # make saver
         self.saver = tf.train.Saver()
 
@@ -118,8 +129,9 @@ class Model:
 
 
     def close(self, ty=None, value=None, tb=None):
-        # if self.init_env:
-        #     self.env.close()
+        '''
+        Closes and saves model
+        '''
 
         if self.save_model:
             self.save(self.conf['save_path_prefix'])

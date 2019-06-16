@@ -1,6 +1,10 @@
 #
 # Trains the deep q network
 #
+# To run:
+#
+# python train.py --memory --double --dueling --max-train=5000000 --agentenv=Breakout -O data/data-breakout
+#
 
 import argparse
 
@@ -9,10 +13,12 @@ from rl.deep_q_network import DeepQNetwork
 
 parser = argparse.ArgumentParser()
 
-# game agent
+# game agent / environment
 parser.add_argument('-a', '--agent', dest='agent', default='rl.game_agent.BreakoutAgent')
-# game environment
 parser.add_argument('-e', '--env', dest='environment', default='rl.game_environment.BreakoutEnvironment')
+parser.add_argument('--ae', '--agentenv', dest='agent_environment', default=None)
+
+# save options
 parser.add_argument('-m', '--model-save-prefix', dest='model_save_prefix', default=None)
 parser.add_argument('-O', '--dir', '--save-dir', dest='save_dir', default='./data')
 
@@ -28,7 +34,6 @@ parser.add_argument('--mss', '--mem-save-size', dest='mem_save_size', type=int)
 parser.add_argument('--sms', '--save-model-steps', dest='save_model_steps', type=int)
 parser.add_argument('--cns', '--copy-network-steps', dest='copy_network_steps', type=int)
 
-parser.add_argument('--svs', '--save-video-steps', dest='num_train_steps_save_video', type=int)
 parser.add_argument('--fbt', '--frames-before-training', dest='num_game_frames_before_training', type=int)
 parser.add_argument('--fs', '--frame-skip', dest='frame_skip', type=int)
 parser.add_argument('--rs', '--replay-size', dest='replay_max_memory_length', type=int)
@@ -41,6 +46,11 @@ args = parser.parse_args()
 
 conf = {}
 conf.update(vars(args))
+
+if args.agent_environment != None:
+    # override agent and environment with agent_environment option
+    conf['agent'] = 'rl.game_agent.{}Agent'.format(args.agent_environment)
+    conf['environment'] = 'rl.game_environment.{}Environment'.format(args.agent_environment)
 
 network = DeepQNetwork(conf, initialize=True)
 
