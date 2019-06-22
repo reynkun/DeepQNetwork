@@ -42,14 +42,24 @@ class DeepQNetwork:
         'use_episodes': True,
         'use_dueling': False,
         'use_double': False,
-        'use_priority': False,
+        'use_per': False,
+        'use_per_annealing': False,
         'use_momentum': False,
         'use_memory': True,
         'use_log': True,
         'frame_skip': 1,
         'max_game_length': 50000,
         'tf_log_level': 3,
+        'per_a': 0.6,
+        'per_b_start': 0.4,
+        'per_b_end': 1,
+        'per_anneal_steps': 2000000
     }
+
+
+    MAX_MEMORY_BATCH_SIZE = 128
+    MIN_ERROR_PRIORITY = 0.01
+    MAX_ERROR_PRIORITY = 1.0
 
 
     def __init__(self, conf, initialize=False):
@@ -201,7 +211,7 @@ class DeepQNetwork:
         Initialize variables for training
         '''
 
-        # train settings
+        # pull some settings from config
         self.max_num_training_steps = self.conf['max_num_training_steps']
         self.replay_max_memory_length = self.conf['replay_max_memory_length']
         self.num_game_frames_before_training = self.conf['num_game_frames_before_training']
@@ -210,13 +220,11 @@ class DeepQNetwork:
         self.copy_steps = self.conf['copy_network_steps']
         self.train_report_interval = self.conf['train_report_interval']
         self.num_game_steps_per_train = self.conf['num_game_steps_per_train']
-        self.use_priority = self.conf['use_priority']
+        self.use_per = self.conf['use_per']
         self.num_train_steps_save_video = self.conf['num_train_steps_save_video']
         self.discount_rate = self.conf['discount_rate']
 
-        # other vars
         self.step = self.agent.get_training_step()
-
         self.train_report_start_time = time.time()
         self.train_report_last_step = self.step
         self.total_losses = []
@@ -227,6 +235,14 @@ class DeepQNetwork:
                                         self.agent.INPUT_CHANNELS,
                                         max_size=self.batch_size,
                                         state_type=self.agent.STATE_TYPE)
+
+        if self.use_per:
+            # batch memory
+            self.memory_batch = ReplayMemory(self.agent.INPUT_HEIGHT,
+                                             self.agent.INPUT_WIDTH,
+                                             self.agent.INPUT_CHANNELS,
+                                             max_size=self.MAX_MEMORY_BATCH_SIZE,
+                                             state_type=self.agent.STATE_TYPE)
 
         # allocate replay memory
         if self.conf['use_memory']:
@@ -250,8 +266,11 @@ class DeepQNetwork:
                                              max_size=self.replay_max_memory_length,
                                              cache_size=self.conf['replay_cache_size'])
 
-        # replay sampler
-        self.replay_sampler = ReplaySampler(self.memories)
+        # initialize memory sampler
+        if self.use_per:
+            self._init_per()
+        else:
+            self.replay_sampler = ReplaySampler(self.memories)
 
 
         # initialize run_game step generator
@@ -265,6 +284,29 @@ class DeepQNetwork:
 
             while len(self.replay_sampler) < self.num_game_frames_before_training:
                 self._game_step()
+
+
+    def _init_per(self):
+        '''
+        Initialize prioritized experience replay variables
+        '''
+
+        self.replay_sampler = ReplaySamplerPriority(self.memories)
+
+        self.per_a = self.conf['per_a']
+
+        self.per_b_start = self.conf['per_b_start']
+        self.per_b_end = self.conf['per_b_end']
+        self.per_b = self.per_b_start
+
+        self.per_anneal_steps = self.conf['per_anneal_steps']
+
+        self.last_min_loss = None
+        self.last_max_loss = None
+        self.last_max_weight = None
+
+        self.tree_idxes = np.zeros((self.batch_size), dtype=int)
+        self.priorities = np.zeros((self.batch_size), dtype=float)
 
 
     def _train_loop(self):
@@ -304,14 +346,21 @@ class DeepQNetwork:
 
         # get max q value 
         target_max_q_values = self._get_target_max_q_values(self.train_batch.rewards,
-                                                           self.train_batch.continues,
-                                                           self.train_batch.next_states)
+                                                            self.train_batch.continues,
+                                                            self.train_batch.next_states)
 
 
         # train the model
         self.step, losses, loss = self.agent.train(self.train_batch.states,
                                                    self.train_batch.actions,
-                                                   target_max_q_values)
+                                                   target_max_q_values,
+                                                   is_weights=self.is_weights)
+
+        if self.use_per:
+            # update priority steps in sum tree
+            losses = self._make_losses(losses)
+                    
+            self.replay_sampler.update_sum_tree(self.tree_idxes, losses)
 
         self.total_losses.append(loss)
 
@@ -336,7 +385,7 @@ class DeepQNetwork:
         '''
         Train and report stats to the log
         '''
-        # log info
+
         if self.step % self.train_report_interval == 0:
             elapsed = time.time() - self.train_report_start_time
             if elapsed > 0:
@@ -354,10 +403,16 @@ class DeepQNetwork:
 
             self.total_losses.clear()
 
-            log('[train] step {} avg loss: {:0.5f} mem: {:d} fr: {:0.1f}'.format(self.step,
-                                                                                 avg_loss,
-                                                                                 len(self.replay_sampler),
-                                                                                 frame_rate))
+            if self.use_per:
+                per_str = ' per_ab: {:0.2f}/{:0.2f} avg/min/max loss: {:0.3f}/{:0.3f}/{:0.3f} max_weight: {:0.3f} sum total: {:0.1f} '.format(self.per_a, self.per_b, self.last_avg_loss, self.last_min_loss, self.last_max_loss, self.last_max_weight, self.replay_sampler.total)
+            else:
+                per_str = ''
+
+            log('[train] step {} avg loss: {:0.5f}{}mem: {:d} fr: {:0.1f}'.format(self.step,
+                                                                                    avg_loss,
+                                                                                    per_str,
+                                                                                    len(self.replay_sampler),
+                                                                                    frame_rate))
 
 
     def _train_finish(self):
@@ -368,6 +423,7 @@ class DeepQNetwork:
         log('closing replay memory')
 
         if self.conf['use_memory']:
+            # save memories to disk if using ram 
             log('saving', len(self.memories), 'memories to disk')
             old_memories = ReplayMemoryDisk(self._get_replay_memory_path(),
                                             self.agent.INPUT_HEIGHT,
@@ -394,6 +450,8 @@ class DeepQNetwork:
         Run a game step
         '''
 
+        self._update_priority_sampling()
+
         next(self.play_step)
 
         if self.game_runner.game_state['old_state'] is not None:
@@ -404,27 +462,103 @@ class DeepQNetwork:
                                next_state=self.game_runner.game_state['state'])                
 
 
+    def _update_priority_sampling(self):
+        '''
+        Update the strength of priority sampling if set
+        '''
+
+        if self.use_per and self.conf['use_per_annealing']:
+            self.per_b = min(self.per_b_end, self.per_b_start + self.step * ((self.per_b_end - self.per_b_start) / self.per_anneal_steps))
+
 
     def _add_memories(self, state, action, reward, cont, next_state):
         '''
         Add to replay memories
         '''
 
-        self.replay_sampler.append(state=state,
-                                   action=action,
-                                   reward=reward,
-                                   next_state=next_state,
-                                   cont=cont,
-                                   loss=0)
+        if self.use_per:
+            self._add_priority_memory(state, action, reward, cont, next_state)
+        else:
+            self.replay_sampler.append(state=state,
+                                       action=action,
+                                       reward=reward,
+                                       next_state=next_state,
+                                       cont=cont)
+
+
+    def _add_priority_memory(self, state, action, reward, cont, next_state):
+        self.memory_batch.append(state=state,
+                                 action=action,
+                                 reward=reward,
+                                 cont=cont,
+                                 next_state=next_state)
+
+
+        if len(self.memory_batch) >= self.MAX_MEMORY_BATCH_SIZE:                                    
+            target_max_q_values = self._get_target_max_q_values(self.memory_batch.rewards,
+                                                                self.memory_batch.continues,
+                                                                self.memory_batch.next_states)
+
+            losses = self.agent.get_losses(self.memory_batch.states,
+                                           self.memory_batch.actions,
+                                           target_max_q_values)
+            losses = self._make_losses(losses)
+
+            for i in range(len(self.memory_batch)):
+                self.replay_sampler.append(state=self.memory_batch.states[i],
+                                           action=self.memory_batch.actions[i],
+                                           reward=self.memory_batch.rewards[i],
+                                           next_state=self.memory_batch.next_states[i],
+                                           cont=self.memory_batch.continues[i],
+                                           loss=losses[i])
+            self.memory_batch.clear()
+
+            # if len(self.replay_sampler) <= 0:
+            #     max_loss = self.MAX_ERROR_PRIORITY
+            # else:
+            #     max_loss = self.replay_sampler.get_max()
+            #     log('max loss:', max_loss)
+
+
+            # for i in range(len(self.memory_batch)):
+            #     self.replay_sampler.append(state=self.memory_batch.states[i],
+            #                                action=self.memory_batch.actions[i],
+            #                                reward=self.memory_batch.rewards[i],
+            #                                next_state=self.memory_batch.next_states[i],
+            #                                cont=self.memory_batch.continues[i],
+            #                                loss=max_loss)
+            # self.memory_batch.clear()
 
 
     def _sample_memories(self):
         '''
         Sample game steps and write to train batch
         '''
-        # sample randomly from each range
-        self.replay_sampler.sample_memories(self.train_batch,
-                                            batch_size=self.batch_size)
+
+        if self.use_per:
+            if self.step % 5000 == 0 or self.last_max_weight is None:
+                self.last_avg_loss = self.replay_sampler.get_average()
+                self.last_min_loss = max(self.replay_sampler.get_min(), self.MIN_ERROR_PRIORITY)
+                self.last_max_loss = min(self.replay_sampler.get_max(), self.MAX_ERROR_PRIORITY)
+                self.last_max_weight = pow(self.batch_size * (self.last_min_loss / self.replay_sampler.total), -self.per_b)
+
+            # max_weight = pow(self.batch_size * (self.replay_sampler.get_min() + self.MIN_ERROR_PRIORITY), -self.per_b)
+
+            # sample memories from sum tree
+            self.replay_sampler.sample_memories(self.train_batch,
+                                                batch_size=self.batch_size,
+                                                tree_idxes=self.tree_idxes,
+                                                priorities=self.priorities)
+
+            # log(len(self.replay_sampler.sum_tree), self.tree_idxes, self.priorities)
+            sampling_probs = self.priorities / self.replay_sampler.total
+            # log(sampling_probs)
+            self.is_weights = np.power(self.batch_size * sampling_probs, -self.per_b) / self.last_max_weight 
+        else:
+            # sample randomly from each range
+            self.replay_sampler.sample_memories(self.train_batch,
+                                                batch_size=self.batch_size)
+            self.is_weights = None
 
 
     def _get_target_max_q_values(self, rewards, continues, next_states):
@@ -435,6 +569,15 @@ class DeepQNetwork:
         max_next_q_values = self.agent.get_max_q_value(next_states)
 
         return rewards + continues * self.discount_rate * max_next_q_values
+
+
+    def _make_losses(self, losses):
+        '''
+        Calculates priority based on losses for priority queue
+        '''
+        return np.power(np.minimum(losses + self.MIN_ERROR_PRIORITY, 
+                                   self.MAX_ERROR_PRIORITY), 
+                        self.per_a)
 
 
     def _get_replay_memory_path(self):
@@ -483,4 +626,3 @@ class DeepQNetwork:
 
         self.game_runner = GameRunner(self.conf, self.env, self.agent)
         self.play_step = self.game_runner.play_generator()
-

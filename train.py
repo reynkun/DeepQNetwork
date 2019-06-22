@@ -25,7 +25,13 @@ parser.add_argument('-O', '--dir', '--save-dir', dest='save_dir', default='./dat
 # network options
 parser.add_argument('--double', '--use-double', dest='use_double', action='store_true', help='use double network')
 parser.add_argument('--dueling', '--use-dueling', dest='use_dueling', action='store_true', help='use dueling network')
-parser.add_argument('--priority', '--use-priority', dest='use_priority', action='store_true', help='[broken] does not converge correctly')
+
+# priority experience replay settings
+parser.add_argument('--per', '--use-per', dest='use_per', action='store_true', help='use priority experience replay')
+parser.add_argument('--per-anneal', '--use-per-anneal', dest='use_per_annealing', action='store_true', help='use per annealing')
+parser.add_argument('--per-b-start', dest='per_b_start', type=float)
+parser.add_argument('--per-b-end', dest='per_b_end', type=float)
+parser.add_argument('--per-anneal-steps', dest='per_anneal_steps', type=int)
 
 # train options
 parser.add_argument('--max-train', dest='max_num_training_steps', type=int)

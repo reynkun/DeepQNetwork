@@ -10,8 +10,8 @@ class ReplaySampler:
         self.replay_memory = replay_memory
 
 
-    def append(self, state, action, reward, next_state, cont, loss):
-        self.replay_memory.append(state, action, reward, next_state, cont, loss)
+    def append(self, state, action, reward, next_state, cont):
+        self.replay_memory.append(state, action, reward, next_state, cont)
 
 
     def sample_memories(self, target, batch_size=32):
@@ -24,11 +24,6 @@ class ReplaySampler:
 
     def close(self):
         self.replay_memory.close()
-
-
-    def add_losses(self):
-        for i in range(len(self.replay_memory)):
-            self.sum_tree.add(self.replay_memory.losses[i], i)
 
 
     def __getitem__(self, idx):

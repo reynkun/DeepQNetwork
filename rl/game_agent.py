@@ -23,6 +23,8 @@ class GameAgent(Model):
         'use_momentum': False,
         # momentum for momentum optimizer
         'momentum': 0.95,
+        # use priority experience replay
+        'use_per': False,
     }
 
     # class variables.  override for each game
@@ -44,10 +46,11 @@ class GameAgent(Model):
     # num hidden nodes in dense layer
     NUM_HIDDEN = 512
 
+    # num of game frames per game state
     NUM_FRAMES_PER_STATE = 4
 
 
-    def __init__(self, conf, initialize=True):
+    def __init__(self, conf):
         super().__init__(self, conf)
         
         self.conf = self.DEFAULT_OPTIONS.copy()
@@ -67,11 +70,19 @@ class GameAgent(Model):
         trains network
         '''
 
-        feed_dict = {
-            self.X_state: X_states,
-            self.X_action: X_actions,
-            self.y: y
-        }
+        if self.conf['use_per']:
+            feed_dict = {
+                self.X_state: X_states,
+                self.X_action: X_actions,
+                self.y: y,
+                self.is_weights: is_weights
+            }
+        else:
+            feed_dict = {
+                self.X_state: X_states,
+                self.X_action: X_actions,
+                self.y: y
+            }
 
 
         step, _, losses, loss = self.run([self.training_step,
@@ -122,7 +133,7 @@ class GameAgent(Model):
         Get losses
         '''
 
-        return self.run([self.abs_losses],
+        return self.run([self.losses],
                         feed_dict={
                             self.X_state: X_states,
                             self.X_action: actions,
@@ -198,7 +209,7 @@ class GameAgent(Model):
         # target Q
         self.y = tf.placeholder(tf.float32, shape=[None], name='y')
 
-        if self.conf['use_priority']:
+        if self.conf['use_per']:
             self.is_weights = tf.placeholder(tf.float32, [None], name='is_weights')
         else:
             self.is_weights = None
@@ -359,8 +370,9 @@ class GameAgent(Model):
                                                      self.online_max_q_values,
                                                      reduction=tf.losses.Reduction.NONE)
 
-            if self.conf['use_priority']:
-                self.loss = tf.reduce_mean(self.is_weights * self.huber_losses)
+            if self.conf['use_per']:
+                # self.loss = tf.reduce_mean(self.is_weights * self.huber_losses)
+                self.loss = tf.reduce_mean(self.is_weights * tf.squared_difference(self.y, self.online_max_q_values))
                 self.losses = self.abs_losses
             else:
                 self.loss = tf.reduce_mean(self.huber_losses)

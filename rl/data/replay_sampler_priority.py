@@ -1,6 +1,7 @@
 import random
 
 
+import numpy as np
 from .sum_tree import SumTree
 
 
@@ -28,22 +29,31 @@ class ReplaySamplerPriority:
         dup_count = 0
         size = self.sum_tree.total / batch_size
 
+        # print('sample', self.sum_tree.total, batch_size, size)        
+
         for i in range(batch_size):
             s = random.random() * size + i * size
+
+            # print('sample1', s)
+
             t_idx, d_idx, score, memory_idx = self.sum_tree.get_with_info(s)
-            while skip_duplicates and memory_idx in dup_indexes:
-                dup_count += 1
 
-                if dup_count > self.MAX_DUPLICATE_RETRIES:
-                    break
+            # print('sample1', t_idx, d_idx, score, memory_idx)
 
-                s = random.random() * size + i * size
-                t_idx, d_idx, score, memory_idx = self.sum_tree.get_with_info(s)
+            # while skip_duplicates and memory_idx in dup_indexes:
+            #     dup_count += 1
 
+            #     if dup_count > self.MAX_DUPLICATE_RETRIES:
+            #         break
 
-            dup_indexes[memory_idx] = True
+            #     s = random.random() * size + i * size
+            #     t_idx, d_idx, score, memory_idx = self.sum_tree.get_with_info(s)
+
+            # dup_indexes[memory_idx] = True
 
             self.replay_memory.copy(memory_idx, target, i)
+
+            # print(target[i])
 
             if priorities is not None:
                 priorities[i] = score
@@ -67,6 +77,19 @@ class ReplaySamplerPriority:
     def add_losses(self):
         for i in range(len(self.replay_memory)):
             self.sum_tree.add(self.replay_memory.losses[i], i)
+
+
+    def get_min(self):
+        return self.sum_tree.get_min()
+
+
+    def get_max(self):
+        return self.sum_tree.get_max()
+
+
+    def get_average(self):
+        return self.sum_tree.get_average()
+
 
 
     def __getitem__(self, idx):

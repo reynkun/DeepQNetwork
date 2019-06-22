@@ -453,6 +453,37 @@ class TestData(test_base.TestBase):
         self.assertEqual(st.get(1.5), 2)
 
 
+    def test_sum_tree_total_1(self):
+        size = 2049
+        print(size)
+        st = SumTree(size, dtype='uint8')
+
+        for i in range(size):
+            st.add(0.5, i)
+            # self.assertAlmostEqual(st.total, (i+1)* 0.5, 3)
+            print(st.total)
+    
+        print(np.sum(st.tree[st.capacity-1:]))
+
+        self.assertAlmostEqual(st.total, (size)* 0.5, 3)
+
+
+    def test_sum_tree_total_2(self):
+        size = 300002
+        val = 0.8
+        # print(size)
+        st = SumTree(size, dtype='uint8')
+
+        for i in range(size):
+            st.add(val, i)
+            # self.assertAlmostEqual(st.total, (i+1)* 0.5, 3)
+            # print(st.total)
+    
+        print(np.sum(st.tree[st.capacity-1:]))
+
+        self.assertAlmostEqual(st.total, (size)* val, 3)
+
+
     def test_sum_tree_overwrite_1(self):
         st = SumTree(2, dtype='uint8')
 
@@ -723,7 +754,7 @@ class TestData(test_base.TestBase):
         for i in range(3):
             rp.append(np.array([[[i]]]), i, i, np.array([[[i]]]), i, i * 0.01)
 
-        self.assertAlmostEqual(rp.sum_tree.total(), 0.03, places=2)
+        self.assertAlmostEqual(rp.sum_tree.total, 0.03, places=2)
         self.assertAlmostEqual(rp.replay_memory.data_file['losses'][0], 0.02, places=2)
         self.assertAlmostEqual(rp.replay_memory.data_file['losses'][1], 0.01, places=2)
 
@@ -731,7 +762,7 @@ class TestData(test_base.TestBase):
         batch_size = 6
         target = ReplayMemory(1, 1, 1, batch_size)
 
-        tree_idxes = []
+        tree_idxes = np.zeros([batch_size])
         rp.sample_memories(target,
                            batch_size=batch_size,
                            tree_idxes=tree_idxes)
@@ -746,8 +777,11 @@ class TestData(test_base.TestBase):
 
 
         rp.update_sum_tree([1, 2], [0.4, 0.6])
+        self.assertEqual(rp.sum_tree.total, 1.0)
+        self.assertAlmostEqual(rp.get_min(), 0.4, 1)
+        self.assertAlmostEqual(rp.get_max(), 0.6, 1)
 
-        self.assertEqual(rp.sum_tree.total(), 1.0)
+
 
         values = {}
         count = 0
@@ -755,17 +789,22 @@ class TestData(test_base.TestBase):
         for i in range(100):
             rp.sample_memories(target, batch_size=batch_size, tree_idxes=tree_idxes)
             for i in range(batch_size):
-                val = target[1]['action']
+                val = target[i]['action']
 
                 if val not in values:
-                    values[val] = 0
+                    values[val] = 1
                     count += 1
                 else:
                     values[val] += 1
 
             num_batches += 1
 
+        print(values.items())
+
         total = sum([val for val in values.values()])
+
+        print(values[2], total)
+        print(values[1], total)
 
         self.assertAlmostEqual(values[2] / total, 0.4, places=1)
         self.assertAlmostEqual(values[1] / total, 0.6, places=1)
@@ -933,6 +972,132 @@ class TestData(test_base.TestBase):
 
         self.assertAlmostEqual(values[2] / total, 0.66, places=1)
         self.assertAlmostEqual(values[1] / total, 0.33, places=1)
+
+
+    def test_replay_sampler_index(self):
+        rp = ReplaySamplerPriority(ReplayMemory(
+                                    1,
+                                    1,
+                                    1,
+                                    max_size=100))
+
+        total = 0
+        for i in range(10):
+            rp.append(np.array([[[i]]]), i, i, np.array([[[i]]]), i, i * 0.01)
+            total += i * 0.01
+
+
+        batch_size = 6
+        target = ReplayMemory(1, 1, 1, batch_size)
+        tree_idxes = np.zeros((batch_size), dtype=int)
+        priorities = np.zeros((batch_size), dtype=float)
+
+        print('total:', rp.sum_tree.total, total)
+        print(rp.sum_tree.data)
+        print(rp.sum_tree.tree)
+
+        # print(rp.sum_tree.get_with_info(0.4501))
+
+        for i in range(1000):
+            rp.sample_memories(target, batch_size, priorities=priorities, tree_idxes=tree_idxes)
+            print(priorities, tree_idxes)
+            for prior in priorities:
+                if prior == 0:
+                    raise Exception
+
+
+    def test_replay_sampler_min_max(self):
+        rp = ReplaySamplerPriority(ReplayMemory(
+                                    1,
+                                    1,
+                                    1,
+                                    max_size=100))
+
+        # self.assertEqual(rp.get_min(), 0)
+        # self.assertAlmostEqual(rp.get_max(), 0, 2)
+
+        total = 0
+        for i in range(1, 10):
+            rp.append(np.array([[[i]]]), i, i, np.array([[[i]]]), i, i * 0.01)
+            total += i * 0.01
+
+
+        self.assertAlmostEqual(rp.get_min(), 0.01, 2)
+        self.assertAlmostEqual(rp.get_max(), 0.09, 2)
+        self.assertAlmostEqual(rp.get_average(), 0.05, 3)
+        self.assertAlmostEqual(rp.total, 0.05 * 9, 2)
+
+
+    def test_replay_sampler_update_min_max(self):
+        rp = ReplaySamplerPriority(ReplayMemory(
+                                    1,
+                                    1,
+                                    1,
+                                    max_size=100))
+
+        total = 0
+        avg = 0.01
+        for i in range(1, 10):
+            rp.append(np.array([[[i]]]), i, i, np.array([[[i]]]), i, i * 0.01)
+            print(rp.get_average())
+            self.assertAlmostEqual(rp.get_average(), avg, 3)
+            avg += 0.005
+            total += i * 0.01
+
+        batch = ReplayMemory(1, 1, 1, max_size=4)
+        indexes = np.zeros([4], dtype=int)
+        losses = np.zeros([4], dtype=float)
+        
+        print(','.join([str(val) for val in rp.sum_tree.tree[rp.sum_tree._start_data_index():rp.sum_tree._start_data_index()+len(rp)]]))
+        # print(','.join([str(val) for val in rp.sum_tree[rp.sum_tree._start_data_index():]]))
+
+        for i in range(100):
+            rp.sample_memories(batch, 4, tree_idxes=indexes)
+
+
+            losses[0] = 0.12
+            losses[1] = 0.005
+            losses[2] = 0.02
+            losses[3] = 0.03
+
+            rp.update_sum_tree(indexes, losses)
+
+            print('updating', indexes)
+            print(i, ','.join([str(val) for val in rp.sum_tree.tree[rp.sum_tree._start_data_index():rp.sum_tree._start_data_index()+len(rp)]]))
+    
+            self.assertAlmostEqual(rp.get_min(), 0.005, 3)
+            self.assertAlmostEqual(rp.get_max(), 0.12, 2)
+
+
+    def test_replay_sampler_update_average(self):
+        rp = ReplaySamplerPriority(ReplayMemory(
+                                    1,
+                                    1,
+                                    1,
+                                    max_size=100))
+
+        total = 0
+        for i in range(0, 4):
+            rp.append(np.array([[[i]]]), i, i, np.array([[[i]]]), i, 0.01)
+            self.assertAlmostEqual(rp.get_average(), 0.01, 2)
+            total += 0.01
+
+        batch = ReplayMemory(1, 1, 1, max_size=4)
+        indexes = np.zeros([4], dtype=int)
+        losses = np.zeros([4], dtype=float)
+
+        rp.sample_memories(batch, 4, tree_idxes=indexes)
+
+        losses[0] = 0.12
+        losses[1] = 0.005
+        losses[2] = 0.02
+        losses[3] = 0.03
+
+        rp.update_sum_tree(indexes, losses)
+
+        self.assertAlmostEqual(rp.get_min(), 0.005, 3)
+        self.assertAlmostEqual(rp.get_max(), 0.12, 2)
+
 
 
 if __name__ == '__main__':
