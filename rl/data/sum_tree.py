@@ -10,14 +10,13 @@ class SumTree:
 
     '''
 
-    write = 0
-
     def __init__(self, capacity, dtype='uint32'):
         self.capacity = capacity
         self.tree = np.zeros(2*capacity - 1, dtype=np.float32)
         self.data = np.zeros(capacity, dtype=dtype)
         self.size = 0
         self.max_reached = False
+        self.write = 0
 
 
     def add(self, score, data):

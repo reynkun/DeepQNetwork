@@ -53,7 +53,7 @@ args = parser.parse_args()
 conf = {}
 conf.update(vars(args))
 
-if args.agent_environment != None:
+if args.agent_environment is not None:
     # override agent and environment with agent_environment option
     conf['agent'] = 'rl.game_agent.{}Agent'.format(args.agent_environment)
     conf['environment'] = 'rl.game_environment.{}Environment'.format(args.agent_environment)

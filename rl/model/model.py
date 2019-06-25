@@ -11,7 +11,14 @@ from ..utils.logging import log
 class Model:
     '''
     Model handles the complexities of the tensorflow setup and tear down.
-    Also adds model (auto) saving and loading
+    Also adds model (auto) saving and loading.
+
+    To use, subclass Model and then initialize then use with statement:
+
+    model = MyModel()
+    with model:
+        # do stuff
+
     '''
 
     DEFAULT_OPTIONS = {
