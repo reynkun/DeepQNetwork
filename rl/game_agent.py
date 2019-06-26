@@ -25,6 +25,8 @@ class GameAgent(Model):
         'momentum': 0.95,
         # use priority experience replay
         'use_per': False,
+        # q value discount rate between states
+        'discount_rate': 0.99
     }
 
     # class variables.  override for each game
@@ -63,25 +65,29 @@ class GameAgent(Model):
         self.eps_min = self.conf['eps_min']
         self.eps_max = self.conf['eps_max']
         self.eps_decay_steps = self.conf['eps_decay_steps']
+        self.discount_rate = self.conf['discount_rate']
 
 
-    def train(self, X_states, X_actions, y, is_weights=None):
+    def train(self, X_states, X_actions, rewards, continues, next_states, is_weights=None):
         '''
         trains network
         '''
+
+        target_q_values = self._get_target_q_values(rewards, continues, next_states)
+
 
         if self.conf['use_per']:
             feed_dict = {
                 self.X_state: X_states,
                 self.X_action: X_actions,
-                self.y: y,
+                self.y: target_q_values,
                 self.is_weights: is_weights
             }
         else:
             feed_dict = {
                 self.X_state: X_states,
                 self.X_action: X_actions,
-                self.y: y
+                self.y: target_q_values
             }
 
 
@@ -91,6 +97,18 @@ class GameAgent(Model):
                                           self.loss],
                                           feed_dict=feed_dict)
         return step, losses, loss
+
+
+    def _get_target_q_values(self, rewards, continues, next_states):
+        '''
+        Get max q value
+        '''
+
+        max_q_values = self.run([self.max_q_values],
+                                feed_dict={self.X_state: next_states})[0]
+
+        return rewards + continues * self.discount_rate * max_q_values
+
 
 
     def predict(self, X_states, use_target=False):
@@ -119,25 +137,28 @@ class GameAgent(Model):
         return np.argmax(values, axis=1)
 
 
-    def get_max_q_value(self, X_states):
-        '''
-        Get max q value
-        '''
+    # def get_max_q_value(self, X_states):
+    #     '''
+    #     Get max q value
+    #     '''
 
-        return self.run([self.max_q_values],
-                        feed_dict={self.X_state: X_states})[0]
+    #     return self.run([self.max_q_values],
+    #                     feed_dict={self.X_state: X_states})[0]
 
-
-    def get_losses(self, X_states, actions, max_q_values):
+    # def get_losses(self, X_states, actions, max_q_values):
+    def get_losses(self, X_states, actions, rewards, continues, next_states):
         '''
         Get losses
         '''
+
+        target_q_values = self._get_target_q_values(rewards, continues, next_states)
+
 
         return self.run([self.losses],
                         feed_dict={
                             self.X_state: X_states,
                             self.X_action: actions,
-                            self.y: max_q_values
+                            self.y: target_q_values
                         })[0]
 
     def copy_network(self):
@@ -250,7 +271,7 @@ class GameAgent(Model):
             self.max_q_values = tf.reduce_max(self.target_q_values * tf.one_hot(tf.argmax(self.online_q_values, 
                                                                                           axis=1), 
                                                                                 self.num_outputs), 
-                                                     axis=1)
+                                              axis=1)
         else:
             # use target network to get max q value
             self.max_q_values = tf.reduce_max(self.target_q_values, axis=1)

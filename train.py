@@ -58,6 +58,6 @@ if args.agent_environment is not None:
     conf['agent'] = 'rl.game_agent.{}Agent'.format(args.agent_environment)
     conf['environment'] = 'rl.game_environment.{}Environment'.format(args.agent_environment)
 
-network = DeepQNetwork(conf, initialize=True)
+net = DeepQNetwork(conf, initialize=True)
 
-network.train()
+net.train()

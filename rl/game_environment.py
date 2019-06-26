@@ -196,5 +196,4 @@ class MsPacmanEnvironment(GameEnvironment):
                 for i in range(30):
                     self.env.step(self.ACTION_NOTHING)
 
-        # print('action:', action)
         return action
