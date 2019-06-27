@@ -11,7 +11,8 @@ import gym
 import tensorflow as tf
 import numpy as np
 
-from .game_runner import GameRunner
+from .agent.game_agent import GameAgent
+from .utils.import_class import import_class
 from .utils.logging import init_logging, log
 from .game.render import render_game
 from .data.replay_memory_disk import ReplayMemoryDisk
@@ -20,7 +21,7 @@ from .data.replay_sampler import ReplaySampler
 from .data.replay_sampler_priority import ReplaySamplerPriority
 
 
-class DeepQNetwork:
+class DeepQAgent(GameAgent):
     DEFAULT_OPTIONS = {
         'save_dir': './data',
         'game_id': None,
@@ -63,7 +64,7 @@ class DeepQNetwork:
     MAX_ERROR_PRIORITY = 1.0
 
 
-    def __init__(self, conf, initialize=False):
+    def __init__(self, conf):
         '''
         Constructor
 
@@ -74,14 +75,14 @@ class DeepQNetwork:
         Values in conf will override the saved config if possible
         '''
 
-        self._init_conf(conf, initialize=initialize)
-        self._save_conf()
+        self._init_conf(conf)
         self._init_logging()
-        self._init_env()
-        self._init_agent()
+        self._init_model()
+
+        self.is_training = self.conf['is_training']
 
 
-    def _init_conf(self, conf=None, initialize=False):
+    def _init_conf(self, conf=None):
         '''
         Will create a conf if initialize is true, otherwise it 
         will search for a configuration file in 'save_dir' directory
@@ -92,30 +93,41 @@ class DeepQNetwork:
 
         self.save_dir = conf['save_dir']
 
-        if initialize:
-            # create save dir
-            if not os.path.exists(self.save_dir):
-                os.mkdir(self.save_dir)
+        overwrite_data = False
+        if conf is not None:
+            if 'overwrite_data' in conf:
+                overwrite_data = True
+
+
+        if not os.path.exists(self.save_dir) or overwrite_data:
+            # create data dir if it doesn't exist and set default options
+            os.mkdir(self.save_dir)
 
             self.conf = self.DEFAULT_OPTIONS.copy()
         else:
             # go find conf file
             has_conf = False
-            for fn in os.listdir(self.save_dir):
-                if fn.endswith('.conf'):
-                    with open(os.path.join(self.save_dir, fn)) as fin:
-                        self.conf = json.load(fin)
-                        has_conf = True
-                        break
+            try:
+                for fn in os.listdir(self.save_dir):
+                    if fn.endswith('.conf'):
+                        with open(os.path.join(self.save_dir, fn)) as fin:
+                            self.conf = json.load(fin)
+                            has_conf = True
+                            break
+            except FileNotFoundError:
+                raise
 
             if not has_conf:
                 raise Exception('no conf file found')        
 
 
         # override saved conf with parameters
-        for key, value in conf.items():
-            if value is not None:
-                self.conf[key] = value
+        if conf is not None:
+            for key, value in conf.items():
+                if value is not None:
+                    self.conf[key] = value
+
+        self._save_conf()
 
 
     def _save_conf(self):
@@ -151,67 +163,52 @@ class DeepQNetwork:
         os.environ['TF_CPP_MIN_LOG_LEVEL'] = str(self.conf['tf_log_level'])
 
 
-    def _init_env(self):
-        '''
-        Initialize game env
-        '''
+    # def _init_env(self):
+    #     '''
+    #     Initialize game env
+    #     '''
 
-        # make environment
-        if isinstance(self.conf['environment'], str):
-            mod_env_str, cl_env_str = self.conf['environment'].rsplit('.', 1)
-            mod_ag = importlib.import_module(mod_env_str)
-            env_class = getattr(mod_ag, cl_env_str)
-        elif inspect.isclass(self.conf['2']):
-            env_class = self.conf['environment']
-        else:
-            raise Exception('invalid env class')
+    #     # make environment
+    #     if isinstance(self.conf['environment'], str):
+    #         mod_env_str, cl_env_str = self.conf['environment'].rsplit('.', 1)
+    #         mod_ag = importlib.import_module(mod_env_str)
+    #         env_class = getattr(mod_ag, cl_env_str)
+    #     elif inspect.isclass(self.conf['2']):
+    #         env_class = self.conf['environment']
+    #     else:
+    #         raise Exception('invalid env class')
 
-        self.env = env_class(self.conf['game_id'])
-        self.conf['action_space'] = self.env.get_action_space()
+    #     self.env = env_class(self.conf['game_id'])
+    #     self.conf['action_space'] = self.env.get_action_space()
 
 
-    def _init_agent(self):
+    def _init_model(self):
         '''
         Initialize game agent
         '''
 
         # make agent
-        if isinstance(self.conf['agent'], str):
-            mod_agent_str, cl_agent_str = self.conf['agent'].rsplit('.', 1)
-            mod_ag = importlib.import_module(mod_agent_str)
+        # if isinstance(self.conf['model'], str):
+        #     mod_model_str, cl_model_str = self.conf['model'].rsplit('.', 1)
+        #     mod_ag = importlib.import_module(mod_model_str)
 
-            agent_class = getattr(mod_ag, cl_agent_str)
-        elif inspect.isclass(self.conf['agent']):
-            agent_class = self.conf['agent']
-        else:
-            raise Exception('invalid agent class')
+        #     model_class = getattr(mod_ag, cl_model_str)
+        # elif inspect.isclass(self.conf['model']):
+        #     model_class = self.conf['model']
+        # else:
+        #     raise Exception('invalid model class')
 
-        self.agent = agent_class(conf=self.conf)
+        # self.model = model_class(conf=self.conf)
 
-
-    def train(self):
-        '''
-        Runs training loop
-        '''
-
-        start_time = time.time()
-
-        log('train start')
-
-        with self.agent:
-            self._train_init()
-            self._train_loop()
-            self._train_finish()
-
-        elapsed = time.time() - start_time 
-
-        log('train finished in {:0.1f} seconds / {:0.1f} mins / {:0.1f} hours'.format(elapsed, elapsed / 60, elapsed / 60 / 60))
+        model_class = import_class(self.conf['model'])
+        self.model = model_class(conf=self.conf)
 
 
     def _train_init(self):
         '''
         Initialize variables for training
         '''
+
 
         # pull some settings from config
         self.max_num_training_steps = self.conf['max_num_training_steps']
@@ -224,27 +221,34 @@ class DeepQNetwork:
         self.num_game_steps_per_train = self.conf['num_game_steps_per_train']
         self.use_per = self.conf['use_per']
         self.num_train_steps_save_video = self.conf['num_train_steps_save_video']
-        # self.discount_rate = self.conf['discount_rate']
 
-        self.step = self.agent.get_training_step()
+        self.eps_min = self.conf['eps_min']
+        self.eps_max = self.conf['eps_max']
+        self.eps_decay_steps = self.conf['eps_decay_steps']
+
+
+        self.train_start_time = time.time()
+        self.game_step_count = 0
+        self.step = self.model.get_training_step()
+
         self.train_report_start_time = time.time()
         self.train_report_last_step = self.step
         self.total_losses = []
 
         # training batch
-        self.train_batch = ReplayMemory(self.agent.INPUT_HEIGHT,
-                                        self.agent.INPUT_WIDTH,
-                                        self.agent.INPUT_CHANNELS,
+        self.train_batch = ReplayMemory(self.model.INPUT_HEIGHT,
+                                        self.model.INPUT_WIDTH,
+                                        self.model.INPUT_CHANNELS,
                                         max_size=self.batch_size,
-                                        state_type=self.agent.STATE_TYPE)
+                                        state_type=self.model.STATE_TYPE)
 
 
         # allocate replay memory
         if self.conf['use_memory']:
-            self.memories = ReplayMemory(self.agent.INPUT_HEIGHT,
-                                         self.agent.INPUT_WIDTH,
-                                         self.agent.INPUT_CHANNELS,
-                                         state_type=self.agent.STATE_TYPE,
+            self.memories = ReplayMemory(self.model.INPUT_HEIGHT,
+                                         self.model.INPUT_WIDTH,
+                                         self.model.INPUT_CHANNELS,
+                                         state_type=self.model.STATE_TYPE,
                                          max_size=self.replay_max_memory_length)
 
             if os.path.exists(self._get_replay_memory_path()):
@@ -254,10 +258,10 @@ class DeepQNetwork:
                 self.memories.extend(old_memories)
         else:
             self.memories = ReplayMemoryDisk(self._get_replay_memory_path(),
-                                             self.agent.INPUT_HEIGHT,
-                                             self.agent.INPUT_WIDTH,
-                                             self.agent.INPUT_CHANNELS,
-                                             state_type=self.agent.STATE_TYPE,
+                                             self.model.INPUT_HEIGHT,
+                                             self.model.INPUT_WIDTH,
+                                             self.model.INPUT_CHANNELS,
+                                             state_type=self.model.STATE_TYPE,
                                              max_size=self.replay_max_memory_length,
                                              cache_size=self.conf['replay_cache_size'])
 
@@ -268,17 +272,38 @@ class DeepQNetwork:
             self.replay_sampler = ReplaySampler(self.memories)
 
 
-        # initialize run_game step generator
-        self.game_runner = GameRunner(self.conf, self.env, self.agent)
-        self.play_step = self.game_runner.play_generator()
+        # # initialize run_game step generator
+        # self.game_runner = GameRunner(self.conf, self.env, self.model)
+        # self.play_step = self.game_runner.play_generator()
 
 
-        # fill replay memory when first starting training
-        if len(self.replay_sampler) < self.num_game_frames_before_training:
-            log('filling memories until', self.num_game_frames_before_training)
+        # # fill replay memory when first starting training
+        # if len(self.replay_sampler) < self.num_game_frames_before_training:
+        #     log('filling memories until', self.num_game_frames_before_training)
 
-            while len(self.replay_sampler) < self.num_game_frames_before_training:
-                self._game_step()
+        #     while len(self.replay_sampler) < self.num_game_frames_before_training:
+        #         self._game_step()
+
+
+
+
+
+
+    # def train(self):
+    #     '''
+    #     Runs training loop
+    #     '''
+
+    #     start_time = time.time()
+
+    #     log('train start')
+
+    #     with self.model:
+    #         self._train_init()
+    #         self._train_loop()
+    #         self._train_finish()
+
+    #     elapsed = time.time() - start_time 
 
 
     def _init_per(self):
@@ -288,11 +313,11 @@ class DeepQNetwork:
 
         # temporary memory for priority
         # we can add to memory in batches instead of one at time
-        self.per_memory_batch = ReplayMemory(self.agent.INPUT_HEIGHT,
-                                                self.agent.INPUT_WIDTH,
-                                                self.agent.INPUT_CHANNELS,
+        self.per_memory_batch = ReplayMemory(self.model.INPUT_HEIGHT,
+                                                self.model.INPUT_WIDTH,
+                                                self.model.INPUT_CHANNELS,
                                                 max_size=self.MAX_MEMORY_BATCH_SIZE,
-                                                state_type=self.agent.STATE_TYPE)
+                                                state_type=self.model.STATE_TYPE)
 
         self.replay_sampler = ReplaySamplerPriority(self.memories)
 
@@ -313,18 +338,64 @@ class DeepQNetwork:
         self.priorities = np.zeros((self.batch_size), dtype=float)
 
 
-    def _train_loop(self):
+    # def _train_loop(self):
+    #     '''
+    #     Main training loop
+    #     '''
+
+    #     try:
+    #         log('start training')
+
+    #         while self.step < self.max_num_training_steps:
+    #             self._train_step()
+    #     except (KeyboardInterrupt, StopIteration):
+    #         log('train interrupted')
+
+
+    def train(self, game_state):
         '''
-        Main training loop
+        train with current game state
         '''
 
-        try:
-            log('start training')
+        if not self.is_training:
+            return True
 
-            while self.step < self.max_num_training_steps:
-                self._train_step()
-        except (KeyboardInterrupt, StopIteration):
-            log('train interrupted')
+
+        if self.is_training_done():
+            return False
+
+
+        if game_state['game_done']:
+            self.model.set_game_count(self.model.get_game_count() + 1)
+
+        if game_state['old_state'] is not None:
+            self._add_memories(state=game_state['old_state'], 
+                               action=game_state['action'], 
+                               reward=game_state['reward'], 
+                               cont=game_state['cont'], 
+                               next_state=game_state['state'])                
+
+        # log('memories: ', len(self.replay_sampler), self.num_game_frames_before_training)
+        # fill replay memory when first starting training
+        if len(self.replay_sampler) < self.num_game_frames_before_training:
+            return True
+
+        if self.game_step_count == 0:
+            log('[train] train start')
+
+        # only train every N steps
+        self.game_step_count += 1
+        if self.game_step_count % self.num_game_steps_per_train != 0:
+            return True
+        
+
+        self._train_step()
+
+        return True
+
+
+    def is_training_done(self):
+        return self.step >= self.max_num_training_steps
 
 
     def _train_step(self):
@@ -332,18 +403,18 @@ class DeepQNetwork:
         Run one training step
         '''
 
-        self._train_run_and_train()        
-        self._train_update_model()
+        self._train_run_train()        
+        self._train_save_model()
         self._train_report_stats()
 
 
-    def _train_run_and_train(self):
+    def _train_run_train(self):
         '''
         Run game steps and train model
         '''
-        # run game steps
-        for _ in range(self.num_game_steps_per_train):
-            self._game_step()
+        # # run game steps
+        # for _ in range(self.num_game_steps_per_train):
+        #     self._game_step()
 
         
         self._sample_memories()
@@ -355,7 +426,7 @@ class DeepQNetwork:
 
 
         # train the model
-        self.step, losses, loss = self.agent.train(self.train_batch.states,
+        self.step, losses, loss = self.model.train(self.train_batch.states,
                                                    self.train_batch.actions,
                                                    self.train_batch.rewards,
                                                    self.train_batch.continues,
@@ -372,20 +443,41 @@ class DeepQNetwork:
         self.total_losses.append(loss)
 
 
-    def _train_update_model(self):
+    # def _decide_action(self):
+    #     '''
+    #     Decide which action to do.  Uses epsilon if still training, 
+    #     otherwise return the action with max q value
+    #     '''
+
+    #     # Online DQN evaluates what to do
+    #     q_values = self.brain.predict([self.game_state['state']])
+
+    #     # self.game_state['total_max_q'] += q_values.max()
+
+
+    #     if self.is_training or self.use_epsilon:
+    #         self.game_runner.set_action(self.epsilon_greedy(q_values, self.training_step))
+    #         # self.game_state['action'] = self.model.epsilon_greedy(q_values, self.training_step)
+    #     else:
+    #         self.game_runner.set_action(np.argmax(q_values))
+
+    #         # self.game_state['action'] = np.argmax(q_values)
+
+
+    def _train_save_model(self):
         '''
         Update target model and save model to disk
         '''
+
         # Regularly copy the online DQN to the target DQN
         if self.step % self.copy_steps == 0:
             log('copying online to target dqn')
-            self.agent.copy_network()
+            self.model.copy_network()
 
 
         # And save regularly
         if self.step % self.save_steps == 0:
-            self.agent.set_game_count(self.game_runner.total_game_count)
-            self.agent.save(self.save_path_prefix)
+            self.model.save(self.save_path_prefix)
 
 
     def _train_report_stats(self):
@@ -411,15 +503,18 @@ class DeepQNetwork:
             self.total_losses.clear()
 
             if self.use_per:
-                per_str = ' per_ab: {:0.2f}/{:0.2f} avg/min/max loss: {:0.3f}/{:0.3f}/{:0.3f} max_weight: {:0.3f} sum total: {:0.1f} '.format(self.per_a, self.per_b, self.last_avg_loss, self.last_min_loss, self.last_max_loss, self.last_max_weight, self.replay_sampler.total)
+                per_str = 'per_ab: {:0.2f}/{:0.2f} avg/min/max loss: {:0.3f}/{:0.3f}/{:0.3f} max_weight: {:0.3f} sum total: {:0.1f} '.format(self.per_a, self.per_b, self.last_avg_loss, self.last_min_loss, self.last_max_loss, self.last_max_weight, self.replay_sampler.total)
             else:
                 per_str = ''
 
-            log('[train] step {} avg loss: {:0.5f}{}mem: {:d} fr: {:0.1f}'.format(self.step,
+            log('[train] step {} game {}/{} avg loss: {:0.5f} {}mem: {:d} fr: {:0.1f} eps: {:0.2f} '.format(self.step,
+                                                                                    self.game_step_count,
+                                                                                    self.model.get_game_count(),
                                                                                     avg_loss,
                                                                                     per_str,
                                                                                     len(self.replay_sampler),
-                                                                                    frame_rate))
+                                                                                    frame_rate,
+                                                                                    self._get_epsilon(self.step)))
 
 
     def _train_finish(self):
@@ -427,16 +522,17 @@ class DeepQNetwork:
         Clean up training, saving replays, model, and other variables
         '''
 
+        log('train finish')
         log('closing replay memory')
 
         if self.conf['use_memory']:
             # save memories to disk if using ram 
             log('saving', len(self.memories), 'memories to disk')
             old_memories = ReplayMemoryDisk(self._get_replay_memory_path(),
-                                            self.agent.INPUT_HEIGHT,
-                                            self.agent.INPUT_WIDTH,
-                                            self.agent.INPUT_CHANNELS,
-                                            state_type=self.agent.STATE_TYPE,
+                                            self.model.INPUT_HEIGHT,
+                                            self.model.INPUT_WIDTH,
+                                            self.model.INPUT_CHANNELS,
+                                            state_type=self.model.STATE_TYPE,
                                             max_size=self.replay_max_memory_length,
                                             cache_size=0)
 
@@ -448,25 +544,34 @@ class DeepQNetwork:
             self.replay_sampler.close()
 
         # save game count
-        self.agent.set_game_count(self.game_runner.total_game_count)
-        self.agent.save(self.save_path_prefix)
+        # self.model.set_game_count(self.game_runner.total_game_count)
+        self.model.save(self.save_path_prefix)
+
+        elapsed = time.time() - self.train_start_time
+
+        log('train finished in {:0.1f} seconds / {:0.1f} mins / {:0.1f} hours'.format(elapsed, elapsed / 60, elapsed / 60 / 60))
 
 
-    def _game_step(self):
-        '''
-        Run a game step
-        '''
 
-        self._update_priority_sampling()
+    # def _game_step(self):
+    #     '''
+    #     Run a game step
+    #     '''
 
-        next(self.play_step)
 
-        if self.game_runner.game_state['old_state'] is not None:
-            self._add_memories(state=self.game_runner.game_state['old_state'], 
-                               action=self.game_runner.game_state['action'], 
-                               reward=self.game_runner.game_state['reward'], 
-                               cont=self.game_runner.game_state['cont'], 
-                               next_state=self.game_runner.game_state['state'])                
+
+    #     next(self.play_step)
+
+    #     self._update_priority_sampling()
+    #     self._decide_action()
+
+    #     if self.game_runner.game_state['old_state'] is not None:
+    #         self._add_memories(state=self.game_runner.game_state['old_state'], 
+    #                            action=self.game_runner.game_state['action'], 
+    #                            reward=self.game_runner.game_state['reward'], 
+    #                            cont=self.game_runner.game_state['cont'], 
+    #                            next_state=self.game_runner.game_state['state'])                
+
 
 
     def _update_priority_sampling(self):
@@ -502,13 +607,10 @@ class DeepQNetwork:
 
 
         # append only every after MAX_MEMORY_BATCH_SIZE memories are added
-        if len(self.per_memory_batch) >= self.MAX_MEMORY_BATCH_SIZE:                                    
-            # target_max_q_values = self._get_target_max_q_values(self.per_memory_batch.rewards,
-            #                                                     self.per_memory_batch.continues,
-            #                                                     self.per_memory_batch.next_states)
+        if len(self.per_memory_batch) >= self.MAX_MEMORY_BATCH_SIZE:
 
             # calculate losses
-            losses = self.agent.get_losses(self.per_memory_batch.states,
+            losses = self.model.get_losses(self.per_memory_batch.states,
                                            self.per_memory_batch.actions,
                                            self.per_memory_batch.rewards,
                                            self.per_memory_batch.continues,
@@ -562,7 +664,7 @@ class DeepQNetwork:
     #     Get max q_values with discount
     #     '''
 
-    #     max_next_q_values = self.agent.get_max_q_value(next_states)
+    #     max_next_q_values = self.model.get_max_q_value(next_states)
 
     #     return rewards + continues * self.discount_rate * max_next_q_values
 
@@ -583,38 +685,105 @@ class DeepQNetwork:
         return '{}_replay_memory.hdf5'.format(self.save_path_prefix)
 
 
-    def predict(self):
-        '''
-        Runs game with the given model and calculates the scores
-        '''
+    # def play(self):
+    #     '''
+    #     Runs game with the given model and calculates the scores
+    #     '''
 
-        self._predict_init()
+    #     self._play_init()
         
-        with self.agent:
-            try:
-                for game_state in self.play_step:
-                    pass
+    #     with self.model:
+    #         try:
+    #             for game_state in self.play_step:
+    #                 self._decide_action()
+    #                 pass
 
-            except KeyboardInterrupt:
-                log('play interrupted')
+    #         except KeyboardInterrupt:
+    #             log('play interrupted')
 
 
-    def _predict_init(self):
+    def _play_init(self):
         '''
         Initialize play variables
         '''
 
-        # # batch memory
-        # self.train_batch = ReplayMemory(self.agent.INPUT_HEIGHT,
-        #                                 self.agent.INPUT_WIDTH,
-        #                                 self.agent.INPUT_CHANNELS,
-        #                                 max_size=self.conf['batch_size'],
-        #                                 state_type=self.agent.STATE_TYPE)
+        self.use_epsilon = self.conf['use_epsilon']
+        # self.is_training = False
+        # self.game_runner = GameRunner(self.conf, self.env, self.model)
+        # self.play_step = self.game_runner.play_generator()
+
+    def _play_finish(self):
+        pass
 
 
-        self.conf.update({
-            'is_training': False
-        })
+    def get_action(self, state):
+        '''
+        Decide which action to do.  Uses epsilon if still training, 
+        otherwise return the action with max q value
+        '''
 
-        self.game_runner = GameRunner(self.conf, self.env, self.agent)
-        self.play_step = self.game_runner.play_generator()
+        # Online DQN evaluates what to do
+        q_values = self.model.predict([state])
+
+        # self.game_state['total_max_q'] += q_values.max()
+
+        if self.is_training or self.use_epsilon:
+            return self._epsilon_greedy(q_values, self.step)
+            # self.game_state['action'] = self.model.epsilon_greedy(q_values, self.training_step)
+        else:
+            return np.argmax(q_values)
+            # self.game_state['action'] = np.argmax(q_values)
+
+
+    def _get_epsilon(self, step):
+        '''
+        Gets current epsilon based on what step and the epsilon range
+        '''
+        return max(self.eps_min, self.eps_max - (self.eps_max-self.eps_min) * step/self.eps_decay_steps)
+
+
+    def _epsilon_greedy(self, q_values, step):
+        '''
+        Returns the optimal value if over epsilon, other wise returns the argmax action
+        '''
+        epsilon = self._get_epsilon(step)
+
+        if np.random.rand() < epsilon:
+            # random action
+            return np.random.randint(self.model.num_outputs) 
+        else:
+            # optimal action
+            return np.argmax(q_values)
+
+
+    def open(self):
+        self.model.open()
+
+        if self.is_training:
+            self._train_init()
+        else:
+            self._play_init()
+
+
+
+    def close(self, ty=None, value=None, tb=None):
+        if self.is_training:
+            self._train_finish()
+        else:
+            self._play_finish()
+
+        self.model.close()
+
+
+    def __enter__(self):
+        '''
+        Allow for with statement
+        '''
+        return self.open()
+
+
+    def __exit__(self, ty, value, tb):
+        '''
+        Allow for with statement
+        '''
+        self.close(ty, value, tb)

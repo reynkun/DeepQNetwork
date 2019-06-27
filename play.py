@@ -10,10 +10,15 @@
 import argparse
 
 
-from rl.deep_q_network import DeepQNetwork
+from rl.utils.import_class import import_class
+from rl.game_runner import GameRunner
+from rl.utils.logging import init_logging
 
 
 parser = argparse.ArgumentParser()
+
+parser.add_argument('-a', '--agent', dest='agent', default='rl.deep_q_agent.DeepQAgent')
+parser.add_argument('--env', '--environment', dest='environment', default='rl.game_environment.BreakoutEnvironment')
 
 # read config file from target save dir
 parser.add_argument('-O', '--dir', '--save-dir', dest='save_dir', default='./data', help='read config and saved network from save dir')
@@ -29,11 +34,27 @@ parser.add_argument('--display', dest='display', action='store_true', default=Fa
 # save game to mp4
 parser.add_argument('--save', dest='save_video', action='store_true', default=False, help='save video to mp4 into save dir')
 
+# args = parser.parse_args()
+
+# conf = {}
+# conf.update(vars(args))
+
+# # network = DeepQNetwork(conf, initialize=False)
+# # network.predict()
+
+
 args = parser.parse_args()
 
-conf = {}
+conf = {
+    'is_training': False
+}
+
 conf.update(vars(args))
 
-network = DeepQNetwork(conf, initialize=False)
+env = import_class(conf['environment'])()
+conf['action_space'] = env.get_action_space()
+agent = import_class(conf['agent'])(conf)
 
-network.predict()
+with agent:
+    runner = GameRunner(conf, env, agent)
+    runner.run()

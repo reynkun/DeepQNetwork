@@ -9,7 +9,7 @@ from PIL import Image, ImageDraw
 from .model.model import Model
 
 
-class GameAgent(Model):
+class DeepQModel(Model):
     '''
     Builds the tensorflow model for the game agent.
     '''
@@ -62,9 +62,9 @@ class GameAgent(Model):
                 self.conf[key] = value
 
         self.num_outputs = self.conf['action_space']
-        self.eps_min = self.conf['eps_min']
-        self.eps_max = self.conf['eps_max']
-        self.eps_decay_steps = self.conf['eps_decay_steps']
+        # self.eps_min = self.conf['eps_min']
+        # self.eps_max = self.conf['eps_max']
+        # self.eps_decay_steps = self.conf['eps_decay_steps']
         self.discount_rate = self.conf['discount_rate']
 
 
@@ -190,24 +190,6 @@ class GameAgent(Model):
         '''
 
         return self.run([self.game_count])[0]
-
-
-    def epsilon(self, step):
-        '''
-        Gets current epsilon based on what step and the epsilon range
-        '''
-        return max(self.eps_min, self.eps_max - (self.eps_max-self.eps_min) * step/self.eps_decay_steps)
-
-
-    def epsilon_greedy(self, q_values, step):
-        '''
-        Returns the optimal value if over epsilon, other wise returns the argmax action
-        '''
-        epsilon = self.epsilon(step)
-        if np.random.rand() < epsilon:
-            return np.random.randint(self.num_outputs) # random action
-        else:
-            return np.argmax(q_values) # optimal action
 
 
     def make_model(self):
@@ -414,28 +396,28 @@ class GameAgent(Model):
                                                   global_step=self.training_step)
 
 
-class BreakoutAgent(GameAgent):
+class BreakoutModel(DeepQModel):
     INPUT_HEIGHT = 89
     INPUT_WIDTH = 80
     INPUT_CHANNELS = 4
     USE_CONV = True
 
 
-class CartPoleAgent(GameAgent):
+class CartPoleModel(DeepQModel):
     INPUT_HEIGHT = 2
     INPUT_WIDTH = 2
     INPUT_CHANNELS = 4
     USE_CONV = False
 
 
-class SpaceInvadersAgent(GameAgent):
+class SpaceInvadersModel(DeepQModel):
     INPUT_HEIGHT = 89
     INPUT_WIDTH = 80
     INPUT_CHANNELS = 4
     USE_CONV = True
 
 
-class MsPacmanAgent(GameAgent):
+class MsPacmanModel(DeepQModel):
     INPUT_HEIGHT = 86
     INPUT_WIDTH = 80
     INPUT_CHANNELS = 4

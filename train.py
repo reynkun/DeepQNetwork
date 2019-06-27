@@ -8,18 +8,21 @@
 
 import argparse
 
-from rl.deep_q_network import DeepQNetwork
+from rl.utils.import_class import import_class
+from rl.game_runner import GameRunner
+from rl.deep_q_agent import DeepQAgent
 
 
 parser = argparse.ArgumentParser()
 
 # game agent / environment
-parser.add_argument('-a', '--agent', dest='agent', default='rl.game_agent.BreakoutAgent')
+parser.add_argument('-a', '--agent', dest='agent', default='rl.deep_q_agent.DeepQAgent')
+parser.add_argument('-m', '--model', dest='model', default='rl.deep_q_model.BreakoutModel')
 parser.add_argument('-e', '--env', dest='environment', default='rl.game_environment.BreakoutEnvironment')
 parser.add_argument('--ae', '--agentenv', dest='agent_environment', default=None)
 
 # save options
-parser.add_argument('-m', '--model-save-prefix', dest='model_save_prefix', default=None)
+parser.add_argument('--model-save-prefix', dest='model_save_prefix', default=None)
 parser.add_argument('-O', '--dir', '--save-dir', dest='save_dir', default='./data')
 
 # network options
@@ -50,14 +53,23 @@ parser.add_argument('--disk', '--use-disk', dest='use_memory', action='store_fal
 
 args = parser.parse_args()
 
-conf = {}
+conf = {
+    'is_training': True
+}
+
 conf.update(vars(args))
 
 if args.agent_environment is not None:
     # override agent and environment with agent_environment option
-    conf['agent'] = 'rl.game_agent.{}Agent'.format(args.agent_environment)
+    conf['model'] = 'rl.deep_q_model.{}Model'.format(args.model_environment)
     conf['environment'] = 'rl.game_environment.{}Environment'.format(args.agent_environment)
 
-net = DeepQNetwork(conf, initialize=True)
+env = import_class(conf['environment'])()
+conf['action_space'] = env.get_action_space()
+agent = import_class(conf['agent'])(conf)
 
-net.train()
+with agent:
+    runner = GameRunner(conf, env, agent)
+    runner.run()
+
+

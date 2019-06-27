@@ -12,6 +12,7 @@ class GameEnvironment:
     '''
 
     def __init__(self, game_id=None, do_preprocess=True, do_before_action=True):
+    # def __init__(self, game_id=None, do_preprocess=True, do_before_action=True):
         if game_id is not None:
             self.env = gym.make(game_id)
         else:
