@@ -11,6 +11,8 @@ class GameEnvironment:
     for game specific tweaks
     '''
 
+    GAME_ID = None
+
     def __init__(self, game_id=None, do_preprocess=True, do_before_action=True):
     # def __init__(self, game_id=None, do_preprocess=True, do_before_action=True):
         if game_id is not None:
@@ -190,7 +192,7 @@ class MsPacmanEnvironment(GameEnvironment):
 
             # skip intro time at start of game
             if self.num_lives == 3:
-                for i in range(90):
+                for i in range(30):
                     self.env.step(self.ACTION_NOTHING)
             else:
                 # skip time between death

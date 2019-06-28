@@ -62,9 +62,6 @@ class DeepQModel(Model):
                 self.conf[key] = value
 
         self.num_outputs = self.conf['action_space']
-        # self.eps_min = self.conf['eps_min']
-        # self.eps_max = self.conf['eps_max']
-        # self.eps_decay_steps = self.conf['eps_decay_steps']
         self.discount_rate = self.conf['discount_rate']
 
 
@@ -137,15 +134,6 @@ class DeepQModel(Model):
         return np.argmax(values, axis=1)
 
 
-    # def get_max_q_value(self, X_states):
-    #     '''
-    #     Get max q value
-    #     '''
-
-    #     return self.run([self.max_q_values],
-    #                     feed_dict={self.X_state: X_states})[0]
-
-    # def get_losses(self, X_states, actions, max_q_values):
     def get_losses(self, X_states, actions, rewards, continues, next_states):
         '''
         Get losses
@@ -160,6 +148,7 @@ class DeepQModel(Model):
                             self.X_action: actions,
                             self.y: target_q_values
                         })[0]
+
 
     def copy_network(self):
         '''

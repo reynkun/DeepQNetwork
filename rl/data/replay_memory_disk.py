@@ -10,7 +10,12 @@ from .replay_memory import ReplayMemory
 
 class ReplayMemoryDisk:
     '''
-    Stores replay on disk
+    Stores replay on disk.  Replays will be stored
+    up to max_size.  After that oldest memories will
+    be overwritten.  
+
+    Saves with hdf5 format.  
+    Also supports a cache.
     '''
 
     MAX_SIZE = 2000000
@@ -64,6 +69,10 @@ class ReplayMemoryDisk:
 
 
     def create_dataset(self, input_height, input_width, input_channels, state_type, max_size):
+        '''
+        Creates data set with given image size
+        '''
+
         self.data_file.attrs['cur_idx'] = 0
         self.data_file.attrs['is_full'] = False
         self.data_file.attrs['max_size'] = max_size
@@ -93,6 +102,10 @@ class ReplayMemoryDisk:
                                       dtype='float16')
 
     def clear(self):
+        '''
+        Erases replays by resetting index
+        '''
+
         self.cur_idx = 0
         self.is_full = False
 
@@ -101,6 +114,10 @@ class ReplayMemoryDisk:
 
 
     def load_memory(self, memory_fn, delete=True):
+        '''
+        Loads replay memory stored in pickle formated array
+        '''
+
         with open(memory_fn, 'rb') as fin:
             size = pickle.load(fin)
 
@@ -112,6 +129,10 @@ class ReplayMemoryDisk:
 
 
     def append(self, state=None, action=None, reward=None, next_state=None, cont=None, loss=None):
+        '''
+        Appends a new replay
+        '''
+
         self.set(self.cur_idx,
                  state=state,
                  action=action,
@@ -124,12 +145,20 @@ class ReplayMemoryDisk:
 
 
     def extend(self, target):
+        '''
+        Extends memory with a list of replays
+        '''
+
         for i in range(len(target)):
             target.copy(i, self, self.cur_idx)
             self.increment_idx()
 
 
     def set(self, idx, state=None, action=None, reward=None, next_state=None, cont=None, loss=None):
+        '''
+        Sets replay with idx to specified values
+        '''
+
         if state is not None:
             self.data_file['states'][idx] = state
         if action is not None:
@@ -150,16 +179,12 @@ class ReplayMemoryDisk:
                 del self.cache_map[idx]
                 del self.cache_map_rev[cache_idx]
 
-            # self.cache_row(idx,
-            #                state=state,
-            #                action=action,
-            #                reward=reward,
-            #                next_state=next_state,
-            #                cont=cont,
-            #                loss=loss)
-
 
     def get(self, idx):
+        '''
+        Get replay at idx.  Checks cache first then goes to disk
+        '''
+
         if self.cache:
             cache_idx = self.cache_map.get(idx, None)
 
@@ -175,6 +200,9 @@ class ReplayMemoryDisk:
 
 
     def copy(self, idx, target, target_idx):
+        '''
+        Copy replay at idx to target data at index target_idx
+        '''
         if self.cache:
             cache_idx = self.cache_map.get(idx, None)
 
@@ -203,10 +231,18 @@ class ReplayMemoryDisk:
 
 
     def close(self):
+        '''
+        Closes the replay memory
+        '''
+
         self.data_file.close()
 
 
     def get_row(self, idx):
+        '''
+        Gets memory as dict object
+        '''
+
         return {
             'state': self.states[idx],
             'action': self.actions[idx],
@@ -218,6 +254,10 @@ class ReplayMemoryDisk:
 
 
     def cache_row(self, idx, state=None, action=None, reward=None, next_state=None, cont=None, loss=None):
+        '''
+        Puts a row into the cache
+        '''
+
         cache_cur_idx = self.cache.cur_idx
         self.cache_map[idx] = cache_cur_idx
         self.cache.append(state=state,
@@ -235,6 +275,10 @@ class ReplayMemoryDisk:
 
 
     def increment_idx(self):
+        '''
+        Increment index
+        '''
+
         if self.cur_idx + 1 >= self.max_size:
             self.is_full = True
         self.cur_idx = (self.cur_idx + 1) % self.max_size
@@ -278,7 +322,7 @@ class ReplayMemoryDisk:
         return self
 
 
-    def __exit__(self):
+    def __exit__(self, ty, value, tb):
         self.close()
 
 

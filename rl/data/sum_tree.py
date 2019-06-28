@@ -20,6 +20,10 @@ class SumTree:
 
 
     def add(self, score, data):
+        '''
+        Add new data with score
+        '''
+
         idx = self.write + self.capacity - 1
 
         last_idx = self.write
@@ -39,6 +43,9 @@ class SumTree:
 
 
     def update_score(self, tree_idx, score):
+        '''
+        Updates score for tree_idx
+        '''
         change = score - self.tree[tree_idx]
 
         self.tree[tree_idx] = score
@@ -46,12 +53,20 @@ class SumTree:
 
 
     def update_value(self, tree_idx, val):
+        '''
+        Update the value for tree_idx
+        '''
+
         data_idx = self.get_data_idx(tree_idx)
 
         self.data[data_idx] = val
 
 
     def get(self, score):
+        '''
+        Data with value at score
+        '''
+
         tree_idx = self._retrieve(0, score)
         data_idx = self.get_data_idx(tree_idx)
 
@@ -59,6 +74,9 @@ class SumTree:
 
 
     def get_with_info(self, s):
+        '''
+        Get data and index info for score s
+        '''
         tree_idx = self._retrieve(0, s)
         data_idx = self.get_data_idx(tree_idx)
 
@@ -66,14 +84,24 @@ class SumTree:
 
 
     def get_data_idx(self, tree_idx):
+        '''
+        Get index of data for tree_idx
+        '''
+
         return tree_idx - self.capacity + 1
 
 
     def get_data(self, tree_idx):
+        '''
+        Get data stored at tree_idx
+        '''
         return self.data[self.get_data_idx(tree_idx)]
 
 
     def _propagate(self, idx, change):
+        '''
+        Recursively propagate changes through the sum tree
+        '''
         parent = (idx - 1) // 2
 
         self.tree[parent] += change
@@ -83,6 +111,9 @@ class SumTree:
 
 
     def _retrieve(self, idx, score):
+        '''
+
+        '''
         left = 2 * idx + 1
         right = left + 1
 
@@ -99,23 +130,38 @@ class SumTree:
 
 
     def _start_data_index(self):
+        '''
+        Get start index for leafs
+        '''
         return self.capacity - 1
 
 
     @property
     def total(self):
+        '''
+        Total score sum of all leafs 
+        '''        
         return self.tree[0]
 
 
     def get_min(self):
+        '''
+        Get min score
+        '''
         return np.min(self.tree[self._start_data_index():self._start_data_index()+len(self)])
 
 
     def get_max(self):
+        '''
+        Get max score
+        '''
         return np.max(self.tree[self._start_data_index():self._start_data_index()+len(self)])
 
 
     def get_average(self):
+        '''
+        Get average score
+        '''
         return np.average(self.tree[self._start_data_index():self._start_data_index()+len(self)])
 
 
@@ -125,9 +171,5 @@ class SumTree:
 
     def __getitem__(self, item):
         return self.data[item]
-
-
-
-
 
 

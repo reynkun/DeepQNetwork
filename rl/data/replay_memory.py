@@ -4,7 +4,9 @@ import random
 
 class ReplayMemory:
     '''
-    Stores replay in memory
+    Stores replay in memory.  Replays will be stored
+    up to max_size.  After that oldest memories will
+    be overwritten. 
     '''
 
     MAX_SIZE = 10000
@@ -42,11 +44,18 @@ class ReplayMemory:
 
 
     def clear(self):
+        '''
+        Clears replay
+        '''
+
         self.cur_idx = 0
         self.is_full = False
 
 
     def append(self, state=None, action=None, reward=None, next_state=None, cont=None, loss=None):
+        '''
+        Append new replay
+        '''
         self.set(self.cur_idx,
                  state=state,
                  action=action,
@@ -59,12 +68,19 @@ class ReplayMemory:
 
 
     def extend(self, target):
+        '''
+        Extends replay memories with target list
+        '''
         for i in range(len(target)):
             target.copy(i, self, self.cur_idx)
             self.increment_idx()
 
 
     def get(self, idx):
+        '''
+        Gets replay at index idx
+        '''
+
         return {
             'state': self.states[idx],
             'action': self.actions[idx],
@@ -76,6 +92,10 @@ class ReplayMemory:
 
 
     def set(self, idx, state=None, action=None, reward=None, next_state=None, cont=None, loss=None):
+        '''
+        Sets replay at index idx
+        '''
+
         if state is not None:
             self.states[idx] = state
         if action is not None:
@@ -91,6 +111,9 @@ class ReplayMemory:
 
 
     def copy(self, idx, target, target_idx):
+        '''
+        Copies replay from idx into target[target_idx]
+        '''
         target.states[target_idx] = self.states[idx]
         target.actions[target_idx] = self.actions[idx]
         target.rewards[target_idx] = self.rewards[idx]
@@ -100,12 +123,20 @@ class ReplayMemory:
 
 
     def increment_idx(self):
+        '''
+        Increment index
+        '''
+
         if self.cur_idx + 1 >= self.max_size:
             self.is_full = True
         self.cur_idx = (self.cur_idx + 1) % self.max_size
 
 
     def __getitem__(self, idx):
+        '''
+        Support for [] style access
+        '''
+
         if isinstance(idx, int):
             return self.get(idx)
         else:
@@ -128,6 +159,9 @@ class ReplayMemory:
 
 
     def __len__(self):
+        '''
+        Get num of replays
+        '''
         if self.is_full:
             return self.max_size
 
@@ -135,6 +169,10 @@ class ReplayMemory:
 
 
     def __iter__(self):
+        '''
+        Support for iteration
+        '''
+
         for i in range(len(self)):
             yield self[i]
 

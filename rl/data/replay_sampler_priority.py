@@ -29,31 +29,12 @@ class ReplaySamplerPriority:
         dup_count = 0
         size = self.sum_tree.total / batch_size
 
-        # print('sample', self.sum_tree.total, batch_size, size)        
-
         for i in range(batch_size):
             s = random.random() * size + i * size
 
-            # print('sample1', s)
-
             t_idx, d_idx, score, memory_idx = self.sum_tree.get_with_info(s)
 
-            # print('sample1', t_idx, d_idx, score, memory_idx)
-
-            # while skip_duplicates and memory_idx in dup_indexes:
-            #     dup_count += 1
-
-            #     if dup_count > self.MAX_DUPLICATE_RETRIES:
-            #         break
-
-            #     s = random.random() * size + i * size
-            #     t_idx, d_idx, score, memory_idx = self.sum_tree.get_with_info(s)
-
-            # dup_indexes[memory_idx] = True
-
             self.replay_memory.copy(memory_idx, target, i)
-
-            # print(target[i])
 
             if priorities is not None:
                 priorities[i] = score
@@ -65,7 +46,6 @@ class ReplaySamplerPriority:
     def update_sum_tree(self, tree_idxes, losses):
         for t_idx, loss in zip(tree_idxes, losses):
             self.sum_tree.update_score(t_idx, loss)
-            # memory_idx = self.sum_tree[self.sum_tree.get_data_idx(t_idx)]
             memory_idx = self.sum_tree.get_data(t_idx)
             self.replay_memory.set(memory_idx, loss=loss)
 

@@ -11,10 +11,10 @@ import gym
 import tensorflow as tf
 import numpy as np
 
+
 from .agent.game_agent import GameAgent
 from .utils.import_class import import_class
 from .utils.logging import init_logging, log
-from .game.render import render_game
 from .data.replay_memory_disk import ReplayMemoryDisk
 from .data.replay_memory import ReplayMemory
 from .data.replay_sampler import ReplaySampler
@@ -93,32 +93,24 @@ class DeepQAgent(GameAgent):
 
         self.save_dir = conf['save_dir']
 
-        overwrite_data = False
-        if conf is not None:
-            if 'overwrite_data' in conf:
-                overwrite_data = True
-
-
-        if not os.path.exists(self.save_dir) or overwrite_data:
+        if not os.path.exists(self.save_dir):
             # create data dir if it doesn't exist and set default options
-            os.mkdir(self.save_dir)
+            os.makedirs(self.save_dir, exist_ok=True)
 
             self.conf = self.DEFAULT_OPTIONS.copy()
         else:
-            # go find conf file
-            has_conf = False
-            try:
-                for fn in os.listdir(self.save_dir):
-                    if fn.endswith('.conf'):
-                        with open(os.path.join(self.save_dir, fn)) as fin:
-                            self.conf = json.load(fin)
-                            has_conf = True
-                            break
-            except FileNotFoundError:
-                raise
+            # find conf file in save_dir
+            conf_count = 0
+            for fn in os.listdir(self.save_dir):
+                if fn.endswith('.conf'):
+                    with open(os.path.join(self.save_dir, fn)) as fin:
+                        self.conf = json.load(fin)
+                        conf_count += 1
 
-            if not has_conf:
-                raise Exception('no conf file found')        
+            if not conf_count:
+                raise Exception('no conf file found')
+            elif conf_count > 1:
+                raise Exception('too many confs in directory')
 
 
         # override saved conf with parameters
@@ -163,42 +155,10 @@ class DeepQAgent(GameAgent):
         os.environ['TF_CPP_MIN_LOG_LEVEL'] = str(self.conf['tf_log_level'])
 
 
-    # def _init_env(self):
-    #     '''
-    #     Initialize game env
-    #     '''
-
-    #     # make environment
-    #     if isinstance(self.conf['environment'], str):
-    #         mod_env_str, cl_env_str = self.conf['environment'].rsplit('.', 1)
-    #         mod_ag = importlib.import_module(mod_env_str)
-    #         env_class = getattr(mod_ag, cl_env_str)
-    #     elif inspect.isclass(self.conf['2']):
-    #         env_class = self.conf['environment']
-    #     else:
-    #         raise Exception('invalid env class')
-
-    #     self.env = env_class(self.conf['game_id'])
-    #     self.conf['action_space'] = self.env.get_action_space()
-
-
     def _init_model(self):
         '''
         Initialize game agent
         '''
-
-        # make agent
-        # if isinstance(self.conf['model'], str):
-        #     mod_model_str, cl_model_str = self.conf['model'].rsplit('.', 1)
-        #     mod_ag = importlib.import_module(mod_model_str)
-
-        #     model_class = getattr(mod_ag, cl_model_str)
-        # elif inspect.isclass(self.conf['model']):
-        #     model_class = self.conf['model']
-        # else:
-        #     raise Exception('invalid model class')
-
-        # self.model = model_class(conf=self.conf)
 
         model_class = import_class(self.conf['model'])
         self.model = model_class(conf=self.conf)
@@ -206,9 +166,17 @@ class DeepQAgent(GameAgent):
 
     def _train_init(self):
         '''
-        Initialize variables for training
+        Initialize for training
         '''
 
+        self._train_init_vars()
+        self._train_init_memory()
+
+
+    def _train_init_vars(self):
+        '''
+        Initialize settings/variables for training
+        '''
 
         # pull some settings from config
         self.max_num_training_steps = self.conf['max_num_training_steps']
@@ -226,7 +194,6 @@ class DeepQAgent(GameAgent):
         self.eps_max = self.conf['eps_max']
         self.eps_decay_steps = self.conf['eps_decay_steps']
 
-
         self.train_start_time = time.time()
         self.game_step_count = 0
         self.step = self.model.get_training_step()
@@ -234,6 +201,12 @@ class DeepQAgent(GameAgent):
         self.train_report_start_time = time.time()
         self.train_report_last_step = self.step
         self.total_losses = []
+
+
+    def _train_init_memory(self):
+        '''
+        Initialize replay memory
+        '''
 
         # training batch
         self.train_batch = ReplayMemory(self.model.INPUT_HEIGHT,
@@ -272,40 +245,6 @@ class DeepQAgent(GameAgent):
             self.replay_sampler = ReplaySampler(self.memories)
 
 
-        # # initialize run_game step generator
-        # self.game_runner = GameRunner(self.conf, self.env, self.model)
-        # self.play_step = self.game_runner.play_generator()
-
-
-        # # fill replay memory when first starting training
-        # if len(self.replay_sampler) < self.num_game_frames_before_training:
-        #     log('filling memories until', self.num_game_frames_before_training)
-
-        #     while len(self.replay_sampler) < self.num_game_frames_before_training:
-        #         self._game_step()
-
-
-
-
-
-
-    # def train(self):
-    #     '''
-    #     Runs training loop
-    #     '''
-
-    #     start_time = time.time()
-
-    #     log('train start')
-
-    #     with self.model:
-    #         self._train_init()
-    #         self._train_loop()
-    #         self._train_finish()
-
-    #     elapsed = time.time() - start_time 
-
-
     def _init_per(self):
         '''
         Initialize prioritized experience replay variables
@@ -338,32 +277,16 @@ class DeepQAgent(GameAgent):
         self.priorities = np.zeros((self.batch_size), dtype=float)
 
 
-    # def _train_loop(self):
-    #     '''
-    #     Main training loop
-    #     '''
-
-    #     try:
-    #         log('start training')
-
-    #         while self.step < self.max_num_training_steps:
-    #             self._train_step()
-    #     except (KeyboardInterrupt, StopIteration):
-    #         log('train interrupted')
-
-
     def train(self, game_state):
         '''
-        train with current game state
+        Train with game state
         '''
 
         if not self.is_training:
             return True
 
-
         if self.is_training_done():
             return False
-
 
         if game_state['game_done']:
             self.model.set_game_count(self.model.get_game_count() + 1)
@@ -375,8 +298,7 @@ class DeepQAgent(GameAgent):
                                cont=game_state['cont'], 
                                next_state=game_state['state'])                
 
-        # log('memories: ', len(self.replay_sampler), self.num_game_frames_before_training)
-        # fill replay memory when first starting training
+        # add X amount of replay memory before starting training
         if len(self.replay_sampler) < self.num_game_frames_before_training:
             return True
 
@@ -386,8 +308,7 @@ class DeepQAgent(GameAgent):
         # only train every N steps
         self.game_step_count += 1
         if self.game_step_count % self.num_game_steps_per_train != 0:
-            return True
-        
+            return True        
 
         self._train_step()
 
@@ -395,6 +316,9 @@ class DeepQAgent(GameAgent):
 
 
     def is_training_done(self):
+        '''
+        Checks if training is done
+        '''
         return self.step >= self.max_num_training_steps
 
 
@@ -412,17 +336,9 @@ class DeepQAgent(GameAgent):
         '''
         Run game steps and train model
         '''
-        # # run game steps
-        # for _ in range(self.num_game_steps_per_train):
-        #     self._game_step()
 
-        
+        # sample        
         self._sample_memories()
-
-        # # get max q value 
-        # target_max_q_values = self._get_target_max_q_values(self.train_batch.rewards,
-        #                                                     self.train_batch.continues,
-        #                                                     self.train_batch.next_states)
 
 
         # train the model
@@ -436,32 +352,11 @@ class DeepQAgent(GameAgent):
 
         if self.use_per:
             # update priority steps in sum tree
-            losses = self._make_losses(losses)
-                    
+            self._update_priority_sampling()
+            losses = self._make_priority(losses)
             self.replay_sampler.update_sum_tree(self.tree_idxes, losses)
 
         self.total_losses.append(loss)
-
-
-    # def _decide_action(self):
-    #     '''
-    #     Decide which action to do.  Uses epsilon if still training, 
-    #     otherwise return the action with max q value
-    #     '''
-
-    #     # Online DQN evaluates what to do
-    #     q_values = self.brain.predict([self.game_state['state']])
-
-    #     # self.game_state['total_max_q'] += q_values.max()
-
-
-    #     if self.is_training or self.use_epsilon:
-    #         self.game_runner.set_action(self.epsilon_greedy(q_values, self.training_step))
-    #         # self.game_state['action'] = self.model.epsilon_greedy(q_values, self.training_step)
-    #     else:
-    #         self.game_runner.set_action(np.argmax(q_values))
-
-    #         # self.game_state['action'] = np.argmax(q_values)
 
 
     def _train_save_model(self):
@@ -503,18 +398,23 @@ class DeepQAgent(GameAgent):
             self.total_losses.clear()
 
             if self.use_per:
-                per_str = 'per_ab: {:0.2f}/{:0.2f} avg/min/max loss: {:0.3f}/{:0.3f}/{:0.3f} max_weight: {:0.3f} sum total: {:0.1f} '.format(self.per_a, self.per_b, self.last_avg_loss, self.last_min_loss, self.last_max_loss, self.last_max_weight, self.replay_sampler.total)
+                per_str = 'per_ab: {:0.2f}/{:0.2f}'.format(self.per_a, self.per_b) + \
+                          ' avg/min/max loss: {:0.3f}/{:0.3f}/{:0.3f}'.format(self.last_avg_loss, 
+                                                                              self.last_min_loss, 
+                                                                              self.last_max_loss) + \
+                          ' max_weight: {:0.3f} sum total: {:0.1f} '.format(self.last_max_weight, 
+                                                                            self.replay_sampler.total)
             else:
                 per_str = ''
 
-            log('[train] step {} game {}/{} avg loss: {:0.5f} {}mem: {:d} fr: {:0.1f} eps: {:0.2f} '.format(self.step,
-                                                                                    self.game_step_count,
-                                                                                    self.model.get_game_count(),
-                                                                                    avg_loss,
-                                                                                    per_str,
-                                                                                    len(self.replay_sampler),
-                                                                                    frame_rate,
-                                                                                    self._get_epsilon(self.step)))
+            log('[train] step {} game {}/{}'.format(self.step,
+                                                    self.game_step_count,
+                                                    self.model.get_game_count()) + \
+                ' avg loss: {:0.5f} {}mem: {:d} '.format(avg_loss,
+                                                         per_str, 
+                                                         len(self.replay_sampler)) + \
+                ' fr: {:0.1f} eps: {:0.2f} '.format(frame_rate,
+                                                    self._get_epsilon(self.step)))
 
 
     def _train_finish(self):
@@ -552,33 +452,10 @@ class DeepQAgent(GameAgent):
         log('train finished in {:0.1f} seconds / {:0.1f} mins / {:0.1f} hours'.format(elapsed, elapsed / 60, elapsed / 60 / 60))
 
 
-
-    # def _game_step(self):
-    #     '''
-    #     Run a game step
-    #     '''
-
-
-
-    #     next(self.play_step)
-
-    #     self._update_priority_sampling()
-    #     self._decide_action()
-
-    #     if self.game_runner.game_state['old_state'] is not None:
-    #         self._add_memories(state=self.game_runner.game_state['old_state'], 
-    #                            action=self.game_runner.game_state['action'], 
-    #                            reward=self.game_runner.game_state['reward'], 
-    #                            cont=self.game_runner.game_state['cont'], 
-    #                            next_state=self.game_runner.game_state['state'])                
-
-
-
     def _update_priority_sampling(self):
         '''
         Update the strength of priority sampling if set
         '''
-
         if self.use_per and self.conf['use_per_annealing']:
             self.per_b = min(self.per_b_end, self.per_b_start + self.step * ((self.per_b_end - self.per_b_start) / self.per_anneal_steps))
 
@@ -587,7 +464,6 @@ class DeepQAgent(GameAgent):
         '''
         Add to replay memories
         '''
-
         if self.use_per:
             self._add_priority_memory(state, action, reward, cont, next_state)
         else:
@@ -599,11 +475,14 @@ class DeepQAgent(GameAgent):
 
 
     def _add_priority_memory(self, state, action, reward, cont, next_state):
+        '''
+        Adds priority memory.  Checks for loss value then inserts into memory
+        '''
         self.per_memory_batch.append(state=state,
-                                 action=action,
-                                 reward=reward,
-                                 cont=cont,
-                                 next_state=next_state)
+                                     action=action,
+                                     reward=reward,
+                                     cont=cont,
+                                     next_state=next_state)
 
 
         # append only every after MAX_MEMORY_BATCH_SIZE memories are added
@@ -616,7 +495,7 @@ class DeepQAgent(GameAgent):
                                            self.per_memory_batch.continues,
                                            self.per_memory_batch.next_states)
 
-            losses = self._make_losses(losses)
+            losses = self._make_priority(losses)
 
             for i in range(len(self.per_memory_batch)):
                 self.replay_sampler.append(state=self.per_memory_batch.states[i],
@@ -640,17 +519,13 @@ class DeepQAgent(GameAgent):
                 self.last_max_loss = min(self.replay_sampler.get_max(), self.MAX_ERROR_PRIORITY)
                 self.last_max_weight = pow(self.batch_size * (self.last_min_loss / self.replay_sampler.total), -self.per_b)
 
-            # max_weight = pow(self.batch_size * (self.replay_sampler.get_min() + self.MIN_ERROR_PRIORITY), -self.per_b)
-
             # sample memories from sum tree
             self.replay_sampler.sample_memories(self.train_batch,
                                                 batch_size=self.batch_size,
                                                 tree_idxes=self.tree_idxes,
                                                 priorities=self.priorities)
 
-            # log(len(self.replay_sampler.sum_tree), self.tree_idxes, self.priorities)
             sampling_probs = self.priorities / self.replay_sampler.total
-            # log(sampling_probs)
             self.is_weights = np.power(self.batch_size * sampling_probs, -self.per_b) / self.last_max_weight 
         else:
             # sample randomly from each range
@@ -659,20 +534,11 @@ class DeepQAgent(GameAgent):
             self.is_weights = None
 
 
-    # def _get_target_max_q_values(self, rewards, continues, next_states):
-    #     '''
-    #     Get max q_values with discount
-    #     '''
-
-    #     max_next_q_values = self.model.get_max_q_value(next_states)
-
-    #     return rewards + continues * self.discount_rate * max_next_q_values
-
-
-    def _make_losses(self, losses):
+    def _make_priority(self, losses):
         '''
         Calculates priority based on losses for priority queue
         '''
+
         return np.power(np.minimum(losses + self.MIN_ERROR_PRIORITY, 
                                    self.MAX_ERROR_PRIORITY), 
                         self.per_a)
@@ -685,34 +551,18 @@ class DeepQAgent(GameAgent):
         return '{}_replay_memory.hdf5'.format(self.save_path_prefix)
 
 
-    # def play(self):
-    #     '''
-    #     Runs game with the given model and calculates the scores
-    #     '''
-
-    #     self._play_init()
-        
-    #     with self.model:
-    #         try:
-    #             for game_state in self.play_step:
-    #                 self._decide_action()
-    #                 pass
-
-    #         except KeyboardInterrupt:
-    #             log('play interrupted')
-
-
     def _play_init(self):
         '''
         Initialize play variables
         '''
 
         self.use_epsilon = self.conf['use_epsilon']
-        # self.is_training = False
-        # self.game_runner = GameRunner(self.conf, self.env, self.model)
-        # self.play_step = self.game_runner.play_generator()
+
 
     def _play_finish(self):
+        '''
+        Run on play finishing
+        '''
         pass
 
 
@@ -725,14 +575,10 @@ class DeepQAgent(GameAgent):
         # Online DQN evaluates what to do
         q_values = self.model.predict([state])
 
-        # self.game_state['total_max_q'] += q_values.max()
-
         if self.is_training or self.use_epsilon:
             return self._epsilon_greedy(q_values, self.step)
-            # self.game_state['action'] = self.model.epsilon_greedy(q_values, self.training_step)
         else:
             return np.argmax(q_values)
-            # self.game_state['action'] = np.argmax(q_values)
 
 
     def _get_epsilon(self, step):
@@ -757,6 +603,10 @@ class DeepQAgent(GameAgent):
 
 
     def open(self):
+        '''
+        Make agent ready for use
+        '''
+
         self.model.open()
 
         if self.is_training:
@@ -767,6 +617,10 @@ class DeepQAgent(GameAgent):
 
 
     def close(self, ty=None, value=None, tb=None):
+        '''
+        Close down agent
+        '''
+
         if self.is_training:
             self._train_finish()
         else:

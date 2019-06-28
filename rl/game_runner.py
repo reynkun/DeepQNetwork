@@ -10,8 +10,7 @@ from .utils.render import render_game, render_state
 
 class GameRunner:
     '''
-    Runs the game with given environment.  Has generator style
-    accessors for stepping through the game.
+    Runs the game with given environment and agent
     '''
 
     DEFAULT_OPTIONS = {
@@ -91,11 +90,7 @@ class GameRunner:
         self.max_game_length = self.conf['max_game_length']
         self.is_training = self.conf['is_training']
         self.num_frames_per_state = self.conf['num_frames_per_state']
-        # self.use_epsilon = self.conf['use_epsilon']
-        # self.total_game_count = self.agent.get_game_count()
-        # self.total_game_count = self.conf['total_game_count']
         self.cur_game_count = 0
-        # self.training_step = self.agent.get_training_step()
 
 
         # reporting stats
@@ -110,8 +105,8 @@ class GameRunner:
         Generator which yields every frame and runs one game
         '''
 
+        # log('begin game')
         # reset game
-        # self.training_step = self.agent.get_training_step()
         self._reset_game_state()
 
         while not self.game_state['game_done']:
@@ -124,10 +119,13 @@ class GameRunner:
 
             # return to training
             if self.is_training:
+                # log('train game')
                 self.agent.train(self.game_state)
 
         self._update_and_report_play_stats()
         self._render_game()
+
+        # log('end game')
 
 
     def _reset_game_state(self):
@@ -156,6 +154,7 @@ class GameRunner:
             self.game_state['episode_length'] += 1
 
             if self.game_state['game_length'] > self.max_game_length:
+                # log('breaking game length')
                 break
 
             # get next action 
@@ -165,6 +164,7 @@ class GameRunner:
 
                 # yield to caller
                 if self.is_training:
+                    # log('train episode')
                     self.agent.train(self.game_state)
 
                 # self.game_state['action'] = self.agent.get_action(self.game_state['state'])
@@ -174,28 +174,13 @@ class GameRunner:
             self.game_state['reward'] = 0
             for _ in range(self.frame_skip):
                 if not self._run_game_step():
+                    # log('breaking end step')
                     break
 
             self.game_state['score'] += self.game_state['reward']
             self.game_state['frames'].append(self.game_state['observation'])
 
-
-    # def _decide_action(self):
-    #     '''
-    #     Decide which action to do.  Uses epsilon if still training, 
-    #     otherwise return the action with max q value
-    #     '''
-
-    #     # Online DQN evaluates what to do
-    #     q_values = self.agent.predict([self.game_state['state']])
-
-    #     self.game_state['total_max_q'] += q_values.max()
-
-
-    #     if self.is_training or self.use_epsilon:
-    #         self.game_state['action'] = self.agent.epsilon_greedy(q_values, self.training_step)
-    #     else:
-    #         self.game_state['action'] = np.argmax(q_values)
+        # log('end episode', not self.game_state['episode_done'], not self.game_state['game_done'])
 
 
     def _run_game_step(self):
@@ -204,8 +189,11 @@ class GameRunner:
         Checks for when episodes are finished
         '''
 
+
         # run step
         self.game_state['observation'], step_reward, self.game_state['game_done'], self.game_state['info'] = self.env.step(self.game_state['action'])
+
+        # log('num_lives:', self.game_state['num_lives'], self.game_state['info']['ale.lives'])
 
         # add to reward
         self.game_state['reward'] += step_reward
@@ -232,9 +220,11 @@ class GameRunner:
                                                   })
 
         if self.game_state['game_done']:
+            # log('breaking game done')
             return False
 
         if self.game_state['episode_done']:
+            # log('breaking episode done')
             return False        
 
         return True
@@ -246,8 +236,11 @@ class GameRunner:
         Also saves memories to replay memory
         '''
 
-        self.game_state['old_state'] = self.game_state['state']
-        self.game_state['state'] = np.concatenate(self.game_state['frames'], axis=2)
+        if len(self.game_state['frames']) >= self.num_frames_per_state:
+            self.game_state['old_state'] = self.game_state['state']
+            self.game_state['state'] = np.concatenate(self.game_state['frames'], axis=2)
+
+        # log(self.game_state['state'].shape)
 
 
     def _update_and_report_play_stats(self):
@@ -255,19 +248,12 @@ class GameRunner:
         Replay on play stats
         '''
 
-        # self.total_game_count += 1
         self.cur_game_count += 1
 
         self.play_game_scores.append(self.game_state['score'])
         self.play_max_qs.append(self.game_state['total_max_q'] / self.game_state['game_length'])
 
-        # if not self.is_training or self.total_game_count % self.env.GAME_REPORT_INTERVAL == 0:
         if not self.is_training or self.cur_game_count % self.env.GAME_REPORT_INTERVAL == 0:
-            # if self.game_state['game_length'] > 0:
-            #     mean_max_q = self.game_state['total_max_q'] / self.game_state['game_length']
-            # else:
-            #     mean_max_q = 0
-
             elapsed = time.time() - self.game_state['game_start_time']
             if elapsed > 0:
                 frame_rate = self.game_state['game_length'] / (time.time() - self.game_state['game_start_time'])
@@ -289,19 +275,9 @@ class GameRunner:
                 if min_score is None or score < min_score:
                     min_score = score
 
-            # if len(self.play_max_qs) > 0:
-            #     avg_max_q = sum(self.play_max_qs) / len(self.play_max_qs)
-            # else:
-            #     avg_max_q = 0
-
-            # log('[play] game {}/{} len: {:d} max_q: {:0.3f}/{:0.3f} score: {:0.1f}/{:0.1f}/{:0.1f}/{:0.1f} fr: {:0.1f}'.format(
             log('[play] game {} len: {:d} score: {:0.1f}/{:0.1f}/{:0.1f}/{:0.1f} fr: {:0.1f}'.format(
-                    #    self.training_step,
                        self.cur_game_count,
-                    #    self.total_game_count,
                        self.game_state['game_length'],
-                    #    mean_max_q,
-                    #    avg_max_q,
                        self.game_state['score'],
                        avg_score,
                        min_score,
@@ -326,5 +302,3 @@ class GameRunner:
                         interval=self.conf['interval'],
                         save_path=save_path,
                         display=self.conf['display'])         
-
-

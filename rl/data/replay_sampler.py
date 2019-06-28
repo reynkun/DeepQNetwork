@@ -3,7 +3,7 @@ import random
 
 class ReplaySampler:
     '''
-    Samples memories from replay memory
+    Samples memories from replay memory 
     '''
 
     def __init__(self, replay_memory):
@@ -11,10 +11,19 @@ class ReplaySampler:
 
 
     def append(self, state, action, reward, next_state, cont):
+        '''
+        Append new memory
+        '''
+
         self.replay_memory.append(state, action, reward, next_state, cont)
 
 
     def sample_memories(self, target, batch_size=32):
+        '''
+        Sample memory, taking one memory from each equally
+        divided segment of replays
+        '''
+
         size = len(self) / batch_size
 
         for i in range(batch_size):
@@ -23,6 +32,9 @@ class ReplaySampler:
             self.replay_memory.copy(idx, target, i)
 
     def close(self):
+        '''
+        Close underlying replay memory
+        '''
         self.replay_memory.close()
 
 
