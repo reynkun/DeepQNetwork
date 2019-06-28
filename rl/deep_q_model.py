@@ -119,7 +119,7 @@ class DeepQModel(Model):
             q_values = self.online_q_values
 
         values = self.run([q_values],
-                                  feed_dict={self.X_state: X_states})
+                          feed_dict={self.X_state: X_states})
 
         return values[0]
 
@@ -134,7 +134,7 @@ class DeepQModel(Model):
         return np.argmax(values, axis=1)
 
 
-    def get_losses(self, X_states, actions, rewards, continues, next_states):
+    def get_gasses(self, X_states, actions, rewards, continues, next_states):
         '''
         Get losses
         '''
@@ -390,13 +390,6 @@ class BreakoutModel(DeepQModel):
     INPUT_WIDTH = 80
     INPUT_CHANNELS = 4
     USE_CONV = True
-
-
-class CartPoleModel(DeepQModel):
-    INPUT_HEIGHT = 2
-    INPUT_WIDTH = 2
-    INPUT_CHANNELS = 4
-    USE_CONV = False
 
 
 class SpaceInvadersModel(DeepQModel):

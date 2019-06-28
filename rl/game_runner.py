@@ -102,10 +102,9 @@ class GameRunner:
 
     def _run_game(self):
         '''
-        Generator which yields every frame and runs one game
+        Runs one game
         '''
 
-        # log('begin game')
         # reset game
         self._reset_game_state()
 
@@ -119,13 +118,10 @@ class GameRunner:
 
             # return to training
             if self.is_training:
-                # log('train game')
                 self.agent.train(self.game_state)
 
         self._update_and_report_play_stats()
         self._render_game()
-
-        # log('end game')
 
 
     def _reset_game_state(self):
@@ -142,7 +138,7 @@ class GameRunner:
 
     def _run_episode(self):
         '''
-        Generator which yields every frame and runs one episode
+        Runs one episode
         '''
 
         # reset game state related to episode
@@ -154,7 +150,6 @@ class GameRunner:
             self.game_state['episode_length'] += 1
 
             if self.game_state['game_length'] > self.max_game_length:
-                # log('breaking game length')
                 break
 
             # get next action 
@@ -174,7 +169,6 @@ class GameRunner:
             self.game_state['reward'] = 0
             for _ in range(self.frame_skip):
                 if not self._run_game_step():
-                    # log('breaking end step')
                     break
 
             self.game_state['score'] += self.game_state['reward']
@@ -189,11 +183,8 @@ class GameRunner:
         Checks for when episodes are finished
         '''
 
-
         # run step
         self.game_state['observation'], step_reward, self.game_state['game_done'], self.game_state['info'] = self.env.step(self.game_state['action'])
-
-        # log('num_lives:', self.game_state['num_lives'], self.game_state['info']['ale.lives'])
 
         # add to reward
         self.game_state['reward'] += step_reward

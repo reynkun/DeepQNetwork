@@ -11,9 +11,9 @@ import gym
 import tensorflow as tf
 import numpy as np
 
-
 from .agent.game_agent import GameAgent
 from .utils.import_class import import_class
+from .utils.config import get_conf
 from .utils.logging import init_logging, log
 from .data.replay_memory_disk import ReplayMemoryDisk
 from .data.replay_memory import ReplayMemory
@@ -66,8 +66,6 @@ class DeepQAgent(GameAgent):
 
     def __init__(self, conf):
         '''
-        Constructor
-
         Will initialize if initialize is true, otherwise it 
         will search for a configuration file in 'save_dir' directory
         specified in the conf dict
@@ -99,18 +97,7 @@ class DeepQAgent(GameAgent):
 
             self.conf = self.DEFAULT_OPTIONS.copy()
         else:
-            # find conf file in save_dir
-            conf_count = 0
-            for fn in os.listdir(self.save_dir):
-                if fn.endswith('.conf'):
-                    with open(os.path.join(self.save_dir, fn)) as fin:
-                        self.conf = json.load(fin)
-                        conf_count += 1
-
-            if not conf_count:
-                raise Exception('no conf file found')
-            elif conf_count > 1:
-                raise Exception('too many confs in directory')
+            self.conf = get_conf(self.save_dir)
 
 
         # override saved conf with parameters
@@ -339,7 +326,6 @@ class DeepQAgent(GameAgent):
 
         # sample        
         self._sample_memories()
-
 
         # train the model
         self.step, losses, loss = self.model.train(self.train_batch.states,
@@ -572,7 +558,7 @@ class DeepQAgent(GameAgent):
         otherwise return the action with max q value
         '''
 
-        # Online DQN evaluates what to do
+        # get q_values
         q_values = self.model.predict([state])
 
         if self.is_training or self.use_epsilon:
