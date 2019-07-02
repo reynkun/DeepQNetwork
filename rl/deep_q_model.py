@@ -1,5 +1,12 @@
-from collections import deque
+'''
 
+DeepQModel creates a tensorflow model for the game agent.  
+
+Handles the creation of the tensorflow graph.
+
+'''
+
+from collections import deque
 
 import numpy as np
 import tensorflow as tf
@@ -134,7 +141,7 @@ class DeepQModel(Model):
         return np.argmax(values, axis=1)
 
 
-    def get_gasses(self, X_states, actions, rewards, continues, next_states):
+    def get_losses(self, X_states, actions, rewards, continues, next_states):
         '''
         Get losses
         '''

@@ -5,17 +5,17 @@ To run with BreakoutAgent and BreakoutEnvironment and
 save to data/data-breakout:
 
 ```
-python train.py --modelenv=Breakout -O data/data-breakout
+pipenv run python train.py --modelenv=Breakout -O data/data-breakout
 ```
 To run with less or more steps (Breakout shows ok performance around 1000000)
 
 ```
-python train.py --max-train=2000000 --modelenv=Breakout -O data/data-breakout
+pipenv run python train.py --max-train=2000000 --modelenv=Breakout -O data/data-breakout
 ```
 Add double, dueling, priority enhancements:
 
 ```
-python train.py --double --dueling --per --modelenv=Breakout -O data/data-breakout
+pipenv run python train.py --double --dueling --per --modelenv=Breakout -O data/data-breakout
 ```
 
 '''

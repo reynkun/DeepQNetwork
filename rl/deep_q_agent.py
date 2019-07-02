@@ -1,3 +1,11 @@
+'''
+
+DeepQAgent is a deep q reinforcement learning game agent
+
+Implements the game agent interface and holds a deepqmodel.
+
+'''
+
 import os
 import time
 import json

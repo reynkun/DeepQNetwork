@@ -1,3 +1,15 @@
+'''
+
+GameRunner runs the game using specified environment and agent
+
+Runs the game by taking the giving the current state to the to the agent.  
+The agent returns an action that the runner passes to the environment.
+
+When the runner is in training mode, it will also run the train function
+on the agent after every step.  
+
+'''
+
 import os
 import time
 import numpy as np
@@ -231,8 +243,6 @@ class GameRunner:
             self.game_state['old_state'] = self.game_state['state']
             self.game_state['state'] = np.concatenate(self.game_state['frames'], axis=2)
 
-        # log(self.game_state['state'].shape)
-
 
     def _update_and_report_play_stats(self):
         '''
@@ -280,9 +290,15 @@ class GameRunner:
         '''
         Renders the game to either video or to the display 
         '''
+
         if self.conf['save_video']:
-            save_path = os.path.join(self.conf['save_dir'],
-                                     'video-{}.mp4'.format(self.cur_game_count))
+            while True:
+                i += 1
+                save_path = os.path.join(self.conf['save_dir'],
+                                        'video-{}.mp4'.format(i))
+
+                if not os.path.exists(save_path):
+                    break
         else:
             save_path = None
 

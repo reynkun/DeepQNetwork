@@ -11,6 +11,9 @@ gym = "*"
 numpy = "*"
 atari-py = "*"
 tensorflow = "==1.9.0"
+matplotlib = "*"
+h5py = "*"
+tensorflow-gpu = "==1.9.0"
 
 [requires]
 python_version = "3.6"

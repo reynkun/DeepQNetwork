@@ -8,25 +8,25 @@ To play using the deep q network stored in ./data/data-breakout/:
 
 
 ```
-python play.py -O ./data/data-breakout/
+pipenv run python play.py -O ./data/data-breakout/
 ```
 
 To play and display game:
 
 ```
-python play.py -O ./data/data-breakout/ --display
+pipenv run python play.py -O ./data/data-breakout/ --display
 ```
 
 To play and save video:
 
 ```
-python play.py -O ./data/data-breakout/ --save
+pipenv run python play.py -O ./data/data-breakout/ --save
 ```
 
 To play using random agent:
 
 ```
-python play.py -a rl.agent.game_agent.RandomAgent --env rl.game_environment.BreakoutEnvironment
+pipenv run python play.py -a rl.agent.game_agent.RandomAgent --env rl.game_environment.BreakoutEnvironment
 ```
 
 '''

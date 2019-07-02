@@ -1,3 +1,16 @@
+'''
+
+GameEnvironment wraps the game environment.  
+
+Preprocesses the images for efficiency sake and also does some game-specific
+actions to speed up training. 
+
+Additionally, uses the 'deterministic' version of each game to speed up training.
+
+To add new games, extend GameEnvironment and overload the appropriate methods
+
+'''
+
 import time
 
 import gym
@@ -134,7 +147,7 @@ class MsPacmanEnvironment(GameEnvironment):
     INPUT_HEIGHT = 86
     INPUT_WIDTH = 80
 
-    ACTION_NOTHING = 1
+    ACTION_NOTHING = 0
 
     num_lives = 0
 
@@ -148,13 +161,12 @@ class MsPacmanEnvironment(GameEnvironment):
 
 
     def before_action(self, action, obs, reward, done, info):
-        # start episode with action 0
+        # skip time in intro and between episodes
         if info is not None and info['ale.lives'] != self.num_lives:
             self.num_lives = info['ale.lives']
 
             action = self.ACTION_NOTHING
 
-            # skip time between death
             for _ in range(30):
                 self.env.step(self.ACTION_NOTHING)
 
