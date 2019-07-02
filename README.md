@@ -4,6 +4,10 @@ Implements a deep q reinforcement learning as specified by this [Deep Mind's 201
 
 Using the raw pixels and score, the system is able to learn how to play a simple atari games.
 
+Implemented in python 3.6 and tensorflow 1.9.
+
+Breakout after 2 million steps: [video](https://www.youtube.com/watch?v=K1WTUuAyDY8)
+MsPacman after 10 million steps: [video](https://www.youtube.com/watch?v=xMP6TSwPmPE)
 
 ## System Requirements
 
@@ -57,15 +61,14 @@ pipenv run python train.py --double --dueling --per --modelenv=Breakout -O data/
 
 ## Playing
 
-Once you've trained a model, you may now play the game using the deep q agent.
-
-### Example options
-
-- To play and just display score:
+Once you've trained a model, you may now play the game using the deep q agent.  Specify the `-O save_dir` 
+to point to the path of the saved model.
 
 ```
 pipenv run python play.py -O ./data/data-breakout/
 ```
+
+### Example options
 
 - To play and display game:
 

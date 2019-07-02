@@ -37,7 +37,9 @@ import argparse
 
 from rl.utils.import_class import import_class
 from rl.utils.config import get_conf
+from rl.utils.logging import init_logging
 from rl.game_runner import GameRunner
+
 
 def main():
     '''
@@ -107,13 +109,16 @@ def main():
 
     conf.update(vars(args))
 
-    
+    # init logging
+    init_logging()
+
     if 'save_dir' in conf:
         # pull environment from save dir if specified
         temp_conf = get_conf(conf['save_dir'])
 
         if temp_conf is not None and 'environment' in temp_conf:
             conf['environment'] = temp_conf['environment']
+
 
     env = import_class(conf['environment'])()
     conf['action_space'] = env.get_action_space()

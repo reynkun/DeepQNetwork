@@ -138,10 +138,6 @@ class DeepQAgent(GameAgent):
         Initialize logging and output conf
         '''
 
-        # init logging
-        if self.conf.get('use_log', True):
-            init_logging(self.save_path_prefix)
-
         log('config values:')
         for key, value in self.conf.items():
             log('  {}: {}'.format(key, value))

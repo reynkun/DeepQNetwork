@@ -6,7 +6,7 @@ from logging.handlers import TimedRotatingFileHandler
 logger = None
 
 
-def init_logging(save_path_prefix, add_std_err=True):
+def init_logging(save_path=None, add_std_err=True):
     '''
     Initialize singleton style logger
     '''
@@ -18,13 +18,14 @@ def init_logging(save_path_prefix, add_std_err=True):
     logger = logging.getLogger('rl')
     logger.setLevel(logging.DEBUG)
 
-    log_path = save_path_prefix + '.log'
-
-    hdlr = TimedRotatingFileHandler(log_path, when='D')
     formatter = logging.Formatter('%(asctime).19s [%(levelname)s] %(message)s')
-    hdlr.setFormatter(formatter)
 
-    logger.addHandler(hdlr)
+    if save_path is not None:
+        log_path = save_path + '.log'
+        hdlr = TimedRotatingFileHandler(log_path, when='D')
+        hdlr.setFormatter(formatter)
+
+        logger.addHandler(hdlr)
 
     if add_std_err:
         hdlr = logging.StreamHandler()

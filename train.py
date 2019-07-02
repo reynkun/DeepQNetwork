@@ -20,10 +20,12 @@ pipenv run python train.py --double --dueling --per --modelenv=Breakout -O data/
 
 '''
 
+import os
 import argparse
 
 from rl.utils.import_class import import_class
 from rl.game_runner import GameRunner
+from rl.utils.logging import init_logging
 
 
 def main():
@@ -151,6 +153,11 @@ def main():
             args.model_environment)
         conf['environment'] = 'rl.game_environment.{}Environment'.format(
             args.model_environment)
+
+    # init loging
+    save_path_prefix = os.path.join(conf['save_dir'], conf['environment'])
+    init_logging(save_path=save_path_prefix)
+
 
     env = import_class(conf['environment'])()
     conf['action_space'] = env.get_action_space()
