@@ -28,7 +28,7 @@ pipenv install
 
 Training can take a long time.  For reasonable performance, it may take at least half a day and 1m steps of training.  
 
-For optimal performance include the `--dueling`, `--double` and `--per` options.  
+For optimal performance include the `--dueling`, `--double`, and `--per` options.  
 
 ### Run training
 
@@ -38,7 +38,7 @@ To running a deep q network with all the enhancements on for the Breakout game a
 pipenv run python train.py --double --dueling --per --modelenv=Breakout -O data/data-breakout
 ```
 
-Training may be stopped at anytime using ctrl-c and can be restarted by the running the same command.  The program will read the options from the config file and continue training with the existing model.
+Training may be stopped at anytime using ctrl-c and can be restarted by the running the same command.  As long as the correct data directory is specified with `-O` option, the program will read the options from the config file and continue training with the existing model.
 
 You may also override certain options on subsequent training runs by specifying different options.  For example, options like `--max-train` or `--eps` can be changed on the subsequent training runs.  Network architecture options cannot be changed and will result in an error.  Options like `--double` and `--dueling` will cause an error.
 
@@ -87,5 +87,5 @@ pipenv run python play.py -O ./data/data-breakout/ --save
 - To play using random agent:
 
 ```
-python play.py -a rl.agent.game_agent.RandomAgent --env rl.game_environment.BreakoutEnvironment
+pipenv python play.py -a rl.agent.game_agent.RandomAgent --env rl.game_environment.BreakoutEnvironment
 ```
