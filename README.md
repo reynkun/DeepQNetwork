@@ -6,8 +6,10 @@ Using the raw pixels and score, the system is able to learn how to play a simple
 
 Implemented in python 3.6 and tensorflow 1.9.
 
-Breakout after 2 million steps: [video](https://www.youtube.com/watch?v=K1WTUuAyDY8)
-MsPacman after 10 million steps: [video](https://www.youtube.com/watch?v=xMP6TSwPmPE)
+Sample Videos:
+
+- [Breakout - 2 million steps](https://www.youtube.com/watch?v=K1WTUuAyDY8)
+- [MsPacman - 10 million steps](https://www.youtube.com/watch?v=xMP6TSwPmPE)
 
 ## System Requirements
 

@@ -10,10 +10,10 @@ pillow = "*"
 gym = "*"
 numpy = "*"
 atari-py = "*"
-tensorflow = "==1.9.0"
+tensorflow = "==1.12.3"
 matplotlib = "*"
 h5py = "*"
-tensorflow-gpu = "==1.9.0"
+tensorflow-gpu = "==1.12.3"
 
 [requires]
 python_version = "3.6"
